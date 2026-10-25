@@ -1,0 +1,37 @@
+{
+  "name": "meta-minds-employee-portal",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.mjs",
+    "dev:client": "vite",
+    "build": "tsc -b && vite build",
+    "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.mjs",
+    "setup:admin": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/setup-admin.mjs",
+    "setup:demo": "node --disable-warning=ExperimentalWarning src/setup-demo.mjs",
+    "check:smtp": "node --env-file-if-exists=.env src/check-smtp.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "check": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "nodemailer": "^10.2.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7"
+  }
+}
