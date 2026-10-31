@@ -13,11 +13,16 @@ try {
     DELETE FROM leave_balances;
     DELETE FROM employee_applications;
     DELETE FROM application_documents;
+    DELETE FROM application_verifications;
     DELETE FROM attendance_exceptions;
-    DELETE FROM payroll_runs;
+    DELETE FROM salary_components;
+    DELETE FROM salary_structures;
     DELETE FROM payroll_items;
+    DELETE FROM payroll_runs;
     DELETE FROM payslips;
     DELETE FROM team_members;
+    DELETE FROM employee_emergency_contacts;
+    DELETE FROM employee_referrals;
     DELETE FROM employees;
     DELETE FROM notifications;
     DELETE FROM audit_logs;
@@ -26,6 +31,7 @@ try {
     DELETE FROM activation_tokens;
     DELETE FROM sessions;
     DELETE FROM users WHERE role != 'ceo';
+    DELETE FROM employee_id_sequences;
     DELETE FROM employee_id_year_sequences;
   `);
   db.exec("COMMIT;");

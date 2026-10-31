@@ -4,14 +4,24 @@ const OTP_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const OTP_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 const OTP_DIGITS = "23456789";
 
-export function makeCompanyEmployeeId(year, sequence) {
+export function generateNonZero4Digits() {
+  const digits = "123456789";
+  let result = "";
+  for (let i = 0; i < 4; i++) {
+    result += digits[randomInt(0, 9)];
+  }
+  return result;
+}
+
+export function makeCompanyEmployeeId(year, code) {
   if (!Number.isInteger(year) || year < 2000 || year > 9999) {
     throw new Error("Employee ID year must be a four-digit year.");
   }
-  if (!Number.isSafeInteger(sequence) || sequence < 1) {
-    throw new Error("Employee ID sequence must be a positive integer.");
+  let codeStr = code !== undefined ? String(code).trim() : "";
+  if (!/^[1-9]{4}$/.test(codeStr)) {
+    codeStr = generateNonZero4Digits();
   }
-  return `MM-${year}-${String(sequence).padStart(4, "0")}`;
+  return `MM-${year}-${codeStr}`;
 }
 
 export function createApplicationOtp() {

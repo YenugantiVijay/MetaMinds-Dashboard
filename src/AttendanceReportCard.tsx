@@ -10,12 +10,12 @@ export type AttendanceDayItem = {
 };
 
 const DEFAULT_ATTENDANCE_DATA: AttendanceDayItem[] = [
-  { id: "mon", day: "M", fullDate: "Monday", attendancePercent: 78 },
-  { id: "tue", day: "T", fullDate: "Tuesday", attendancePercent: 92 },
-  { id: "wed", day: "W", fullDate: "Wednesday", attendancePercent: 45 },
-  { id: "thu", day: "T", fullDate: "Thursday", attendancePercent: 70 },
-  { id: "fri", day: "F", fullDate: "Friday", attendancePercent: 51 },
-  { id: "sat", day: "S", fullDate: "Saturday", attendancePercent: 88 },
+  { id: "tue", day: "T", fullDate: "Tuesday", attendancePercent: 78 },
+  { id: "wed", day: "W", fullDate: "Wednesday", attendancePercent: 92 },
+  { id: "thu", day: "T", fullDate: "Thursday", attendancePercent: 45 },
+  { id: "fri", day: "F", fullDate: "Friday", attendancePercent: 70 },
+  { id: "sat", day: "S", fullDate: "Saturday", attendancePercent: 51 },
+  { id: "mon", day: "M", fullDate: "Monday", attendancePercent: 0, isToday: true },
 ];
 
 export type AttendanceReportCardProps = {
@@ -33,13 +33,12 @@ export function AttendanceReportCard({
   const chartId = useId().replace(/:/g, "_");
   const dataset = data && data.length > 0 ? data : DEFAULT_ATTENDANCE_DATA;
 
-  // Prefer today if active (>0), otherwise first day with attendance > 0
-  const todayItem = dataset.find((d) => d.isToday && d.attendancePercent > 0);
-  const firstActiveItem = dataset.find((d) => d.attendancePercent > 0);
+  // Always default to today's item so today is highlighted and active
+  const todayItem = dataset.find((d) => d.isToday);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const activeSelectedId = selectedId && dataset.some((d) => d.id === selectedId)
     ? selectedId
-    : todayItem?.id ?? firstActiveItem?.id ?? dataset[0]?.id ?? "";
+    : todayItem?.id ?? dataset[dataset.length - 1]?.id ?? dataset[0]?.id ?? "";
 
   function handleKeySelection(event: KeyboardEvent, id: string) {
     if (event.key === "Enter" || event.key === " ") {

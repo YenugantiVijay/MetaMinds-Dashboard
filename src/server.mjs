@@ -559,7 +559,7 @@ function buildDashboard(user) {
     WITH RECURSIVE calendar(day) AS (
       SELECT date(?, '-30 days')
       UNION ALL
-      SELECT date(day, '+1 day') FROM calendar WHERE day < date(?, '+1 day')
+      SELECT date(day, '+1 day') FROM calendar WHERE day < ?
     ),
     workdays AS (
       SELECT day FROM calendar
@@ -742,7 +742,9 @@ function createApplication(body, context) {
   if (!["employee", "intern"].includes(employmentType)) fail(400, "Choose employee or intern.");
   const position = requiredString(body.position, "Requested position", 120, 2);
   const department = typeof body.department === "string" ? body.department.trim().slice(0, 100) : "";
-  const proposedJoiningDate = validDate(body.proposedJoiningDate, "Proposed joining date");
+  const proposedJoiningDate = (typeof body.proposedJoiningDate === "string" && body.proposedJoiningDate.trim())
+    ? validDate(body.proposedJoiningDate, "Proposed joining date")
+    : currentDateInZone();
   const discussedSalary = typeof body.discussedSalary === "string" ? body.discussedSalary.trim().slice(0, 50) : "";
   const education = typeof body.education === "string" ? body.education.trim().slice(0, 1000) : "";
   const rawPassword = requiredString(body.password, "Password", 256, 12);
@@ -767,8 +769,15 @@ function createApplication(body, context) {
       UNION ALL SELECT 1 FROM employee_applications WHERE email = ? AND status = 'pending'
       LIMIT 1
     `).get(email, email);
-    if (alreadyApplied) fail(409, "An active account or pending application already uses this email address.");
-    const reference = `MM-APP-${randomBytes(4).toString("hex").toUpperCase()}`;
+    const year = Number(currentDateInZone().slice(0, 4));
+    let employeeId = makeCompanyEmployeeId(year);
+    while (
+      db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId) ||
+      db.prepare("SELECT 1 FROM employee_applications WHERE reference = ?").get(employeeId)
+    ) {
+      employeeId = makeCompanyEmployeeId(year);
+    }
+    const reference = employeeId;
     const result = db.prepare(`
       INSERT INTO employee_applications(
         reference, full_name, first_name, last_name, email, mobile, phone, employment_type,
@@ -808,10 +817,8 @@ function createApplication(body, context) {
     db.prepare("DELETE FROM application_verifications WHERE session_hash = ?").run(sessionHash);
     const confirmation = applicationSubmittedEmail({
       name: fullName,
-      reference,
       position,
       employmentType,
-      proposedJoiningDate,
       appUrl: appUrl.origin,
     });
     const confirmationEmailQueued = queueEmail(email, confirmation.subject, confirmation.text, confirmation.html);
@@ -822,7 +829,7 @@ function createApplication(body, context) {
     if (ceoEmail) {
       queueEmail(ceoEmail, "Registration application requires review", `A new application (${reference}) from ${fullName} is pending. Sign in at ${appUrl.origin} to review it.`);
     }
-    return { id: Number(result.lastInsertRowid), reference, confirmationEmailQueued };
+    return { id: Number(result.lastInsertRowid), reference, fullName, email, position, confirmationEmailQueued };
   });
 }
 
@@ -833,16 +840,18 @@ function approveApplication(user, applicationId) {
     if (!application) fail(404, "Application not found.");
     if (application.status !== "pending") fail(409, "This application has already been reviewed.");
 
-    const year = Number(currentDateInZone().slice(0, 4));
-    let sequence = db.prepare(`
-      INSERT INTO employee_id_year_sequences(year, next_value) VALUES (?, 2)
-      ON CONFLICT(year) DO UPDATE SET next_value = next_value + 1
-      RETURNING next_value - 1 AS value
-    `).get(year).value;
-    let employeeId = makeCompanyEmployeeId(year, sequence);
-    while (db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId)) {
-      sequence = db.prepare("UPDATE employee_id_year_sequences SET next_value = next_value + 1 WHERE year = ? RETURNING next_value - 1 AS value").get(year).value;
-      employeeId = makeCompanyEmployeeId(year, sequence);
+    const currentYear = Number(currentDateInZone().slice(0, 4));
+
+    let employeeId = application.reference;
+    if (!/^MM-\d{4}-[1-9]{4}$/.test(employeeId)) {
+      employeeId = makeCompanyEmployeeId(currentYear);
+      while (
+        db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId) ||
+        db.prepare("SELECT 1 FROM employee_applications WHERE reference = ? AND id != ?").get(employeeId, application.id)
+      ) {
+        employeeId = makeCompanyEmployeeId(currentYear);
+      }
+      db.prepare("UPDATE employee_applications SET reference = ? WHERE id = ?").run(employeeId, application.id);
     }
     let departmentId = null;
     if (application.department) {
@@ -850,15 +859,37 @@ function approveApplication(user, applicationId) {
       departmentId = db.prepare("SELECT id FROM departments WHERE name = ?").get(application.department).id;
     }
     const accountActive = Boolean(application.password_hash);
-    const userResult = db.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'employee', ?)").run(
-      application.email,
-      application.password_hash,
-      Number(accountActive),
-    );
-    const employeeResult = db.prepare(`
-      INSERT INTO employees(user_id, employee_id, full_name, employment_type, position, department_id, proposed_joining_date, photo_url)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(Number(userResult.lastInsertRowid), employeeId, application.full_name, application.employment_type, application.position, departmentId, application.proposed_joining_date, application.photo_url || null);
+
+    let userRowId;
+    const existingUser = db.prepare("SELECT id FROM users WHERE email = ? COLLATE NOCASE").get(application.email);
+    if (existingUser) {
+      db.prepare("UPDATE users SET password_hash = COALESCE(?, password_hash), role = 'employee', active = ? WHERE id = ?")
+        .run(application.password_hash, Number(accountActive), existingUser.id);
+      userRowId = existingUser.id;
+    } else {
+      const userResult = db.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'employee', ?)").run(
+        application.email,
+        application.password_hash,
+        Number(accountActive),
+      );
+      userRowId = Number(userResult.lastInsertRowid);
+    }
+
+    let employeeRowId;
+    const existingEmp = db.prepare("SELECT id FROM employees WHERE user_id = ? OR employee_id = ?").get(userRowId, employeeId);
+    if (existingEmp) {
+      db.prepare(`
+        UPDATE employees SET employee_id = ?, full_name = ?, employment_type = ?, position = ?, department_id = ?, proposed_joining_date = ?, photo_url = ?
+        WHERE id = ?
+      `).run(employeeId, application.full_name, application.employment_type, application.position, departmentId, application.proposed_joining_date, application.photo_url || null, existingEmp.id);
+      employeeRowId = existingEmp.id;
+    } else {
+      const employeeResult = db.prepare(`
+        INSERT INTO employees(user_id, employee_id, full_name, employment_type, position, department_id, proposed_joining_date, photo_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(userRowId, employeeId, application.full_name, application.employment_type, application.position, departmentId, application.proposed_joining_date, application.photo_url || null);
+      employeeRowId = Number(employeeResult.lastInsertRowid);
+    }
     
     // Initialize 25 paid leave quota for approved employee
     const annualLeaveType = db.prepare("SELECT id FROM leave_types WHERE paid = 1 LIMIT 1").get();
@@ -866,21 +897,30 @@ function approveApplication(user, applicationId) {
       db.prepare(`
         INSERT OR IGNORE INTO leave_balances(employee_id, leave_type_id, period_year, entitled_days, used_days)
         VALUES (?, ?, ?, 25, 0)
-      `).run(Number(employeeResult.lastInsertRowid), annualLeaveType.id, year);
+      `).run(employeeRowId, annualLeaveType.id, currentYear);
     }
 
     // Initialize salary structure and components based on discussed salary
     const rawSalary = String(application.discussed_salary || "").replace(/[^0-9]/g, "");
     const salaryMonthly = parseInt(rawSalary, 10);
     if (!Number.isNaN(salaryMonthly) && salaryMonthly > 0) {
+      const effectiveDate = application.proposed_joining_date || currentDateInZone();
       const basic = Math.round(salaryMonthly * 0.50);
       const hra = Math.round(salaryMonthly * 0.30);
       const special = Math.max(0, salaryMonthly - basic - hra);
-      const structResult = db.prepare(`
-        INSERT INTO salary_structures(employee_id, effective_from, currency)
-        VALUES (?, ?, 'INR')
-      `).run(Number(employeeResult.lastInsertRowid), application.proposed_joining_date || currentDateInZone());
-      const structId = Number(structResult.lastInsertRowid);
+
+      const existingStruct = db.prepare("SELECT id FROM salary_structures WHERE employee_id = ? AND effective_from = ?").get(employeeRowId, effectiveDate);
+      let structId;
+      if (existingStruct) {
+        structId = existingStruct.id;
+        db.prepare("DELETE FROM salary_components WHERE salary_structure_id = ?").run(structId);
+      } else {
+        const structResult = db.prepare(`
+          INSERT INTO salary_structures(employee_id, effective_from, currency)
+          VALUES (?, ?, 'INR')
+        `).run(employeeRowId, effectiveDate);
+        structId = Number(structResult.lastInsertRowid);
+      }
       db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'Basic Salary', 'earning', ?)").run(structId, basic * 100);
       db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'House Rent Allowance (HRA)', 'earning', ?)").run(structId, hra * 100);
       db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'Special Allowance', 'earning', ?)").run(structId, special * 100);
@@ -897,7 +937,7 @@ function approveApplication(user, applicationId) {
       const rawToken = randomBytes(32).toString("base64url");
       activationUrl = `${appUrl.origin}/?activate=${encodeURIComponent(rawToken)}`;
       db.prepare("INSERT INTO activation_tokens(user_id, token_hash, expires_at) VALUES (?, ?, ?)").run(
-        Number(userResult.lastInsertRowid),
+        userRowId,
         hash(rawToken),
         new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       );
@@ -905,7 +945,7 @@ function approveApplication(user, applicationId) {
     }
     return {
       employeeId,
-      employeeRowId: Number(employeeResult.lastInsertRowid),
+      employeeRowId,
       emailQueued,
       ...(!emailQueued && activationUrl ? { activationUrl } : {}),
     };
@@ -1091,15 +1131,34 @@ async function route(req, res, context, body, url) {
     const password = requiredString(body.password, "Password", 256, 1);
     rateLimit(req, `login:${hash(identifier)}`, 8, 15 * 60 * 1000);
     const user = db.prepare(`
-      SELECT u.* FROM users u LEFT JOIN employees e ON e.user_id = u.id
+      SELECT u.* FROM users u 
+      LEFT JOIN employees e ON e.user_id = u.id
+      LEFT JOIN employee_applications ea ON (ea.email = u.email OR ea.reference = e.employee_id)
       WHERE (
         u.email = ? COLLATE NOCASE 
         OR e.employee_id = ? COLLATE NOCASE
+        OR ea.reference = ? COLLATE NOCASE
         OR (? = 'ceo' AND u.email = 'demo.ceo@metaminds.local')
         OR (? = 'employee' AND u.email = 'demo.employee@metaminds.local')
       ) LIMIT 1
-    `).get(identifier, identifier, identifier, identifier);
-    if (!user?.active || !user.password_hash || !verifyPassword(password, user.password_hash)) {
+    `).get(identifier, identifier, identifier, identifier, identifier);
+    if (!user) {
+      const pendingApp = db.prepare(`
+        SELECT reference, status, rejection_reason FROM employee_applications
+        WHERE (reference = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)
+        ORDER BY id DESC LIMIT 1
+      `).get(identifier, identifier);
+
+      if (pendingApp) {
+        if (pendingApp.status === "pending") {
+          fail(403, `Application ${pendingApp.reference} is currently awaiting review and approval by the CEO. You can sign in immediately once approved.`);
+        } else if (pendingApp.status === "rejected") {
+          fail(403, `Application ${pendingApp.reference} was not approved. ${pendingApp.rejection_reason ? "Reason: " + pendingApp.rejection_reason : ""}`);
+        }
+      }
+      fail(401, "Email/employee ID or password is incorrect.");
+    }
+    if (!user.active || !user.password_hash || !verifyPassword(password, user.password_hash)) {
       fail(401, "Email/employee ID or password is incorrect.");
     }
     if (context.jar.mm_session) db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash(context.jar.mm_session));
@@ -1191,6 +1250,32 @@ async function route(req, res, context, body, url) {
     if (application.confirmationEmailQueued) void drainOutbox();
     return { status: 201, body: application };
   }
+  if (method === "GET" && path === "/api/applications/status") {
+    const reference = url.searchParams.get("reference") || "";
+    if (!reference) fail(400, "Reference is required.");
+    const app = db.prepare(`
+      SELECT id, reference, full_name AS fullName, email, position, status, rejection_reason AS rejectionReason
+      FROM employee_applications
+      WHERE reference = ?
+    `).get(reference);
+    if (!app) fail(404, "Application not found.");
+    let approvedEmployeeId = null;
+    if (app.status === "approved") {
+      const emp = db.prepare("SELECT employee_id FROM employees WHERE user_id = (SELECT id FROM users WHERE email = ? COLLATE NOCASE) OR employee_id = ?").get(app.email, app.reference);
+      approvedEmployeeId = emp?.employee_id || app.reference;
+    }
+    return {
+      status: 200,
+      body: {
+        status: app.status,
+        fullName: app.fullName,
+        email: app.email,
+        position: app.position,
+        employeeId: approvedEmployeeId,
+        rejectionReason: app.status === "rejected" ? app.rejectionReason : null,
+      },
+    };
+  }
   if (method === "GET" && path === "/api/dashboard") {
     const user = requireUser(context);
     return { status: 200, body: buildDashboard(user) };
@@ -1208,10 +1293,13 @@ async function route(req, res, context, body, url) {
       a.rejection_reason AS rejectionReason, a.photo_url AS photoUrl, a.created_at AS createdAt,
       e.employee_id AS employeeId
     `;
-    const statusParam = url.searchParams.get("status");
-    const rows = statusParam && ["pending", "approved", "rejected"].includes(statusParam)
-      ? db.prepare(`SELECT ${selectCols} FROM employee_applications a LEFT JOIN employees e ON e.user_id = (SELECT u.id FROM users u WHERE u.email = a.email COLLATE NOCASE) WHERE a.status = ? ORDER BY a.id DESC`).all(statusParam)
-      : db.prepare(`SELECT ${selectCols} FROM employee_applications a LEFT JOIN employees e ON e.user_id = (SELECT u.id FROM users u WHERE u.email = a.email COLLATE NOCASE) ORDER BY a.id DESC`).all();
+    const rawStatus = url.searchParams.get("status");
+    const statusParam = rawStatus ? rawStatus.toLowerCase().trim() : "pending";
+    const validStatuses = ["pending", "approved", "rejected"];
+
+    const rows = validStatuses.includes(statusParam)
+      ? db.prepare(`SELECT ${selectCols} FROM employee_applications a LEFT JOIN employees e ON e.user_id = (SELECT u.id FROM users u WHERE u.email = a.email COLLATE NOCASE) WHERE LOWER(a.status) = ? ORDER BY a.id DESC`).all(statusParam)
+      : db.prepare(`SELECT ${selectCols} FROM employee_applications a LEFT JOIN employees e ON e.user_id = (SELECT u.id FROM users u WHERE u.email = a.email COLLATE NOCASE) WHERE LOWER(a.status) = 'pending' ORDER BY a.id DESC`).all();
     return { status: 200, body: rows };
   }
   const applicationAction = path.match(/^\/api\/applications\/(\d+)\/(approve|reject)$/);
@@ -1847,10 +1935,18 @@ const server = createServer(async (req, res) => {
     serveStatic(req, res, url.pathname);
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
-    if (status >= 500) console.error("Request failed", { method: req.method, path: req.url?.split("?")[0], error: error.code ?? "INTERNAL_ERROR" });
+    if (status >= 500) {
+      console.error("Request failed", {
+        method: req.method,
+        path: req.url?.split("?")[0],
+        message: error.message,
+        stack: error.stack,
+        error: error.code ?? "INTERNAL_ERROR",
+      });
+    }
     if (res.headersSent) return res.end();
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ error: status === 500 ? "The request could not be completed." : error.message }));
+    res.end(JSON.stringify({ error: status === 500 ? (error.message || "The request could not be completed.") : error.message }));
   }
 });
 

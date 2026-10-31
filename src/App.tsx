@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  Activity, ArrowDownToLine, ArrowUpRight, Bell, BriefcaseBusiness, CalendarDays, Camera, Check, Copy,
-  ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Eye, EyeOff, FileCheck2, FileText, Fingerprint,
-  GraduationCap, LayoutDashboard, Mail, LogOut, Menu, Search, Settings, ShieldCheck,
-  Sparkles, Upload, Users, X, UserRound, ZoomIn,
+  Activity, ArrowDownToLine, ArrowUpRight, Bell, BriefcaseBusiness, CalendarDays, Camera, Check, Code, Compass, Copy,
+  Cpu, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Eye, EyeOff, FileCheck2, FileText, Fingerprint,
+  Globe, GraduationCap, Layers, LayoutDashboard, Mail, LogOut, Menu, Palette, Search, Settings, Shield, ShieldCheck,
+  Sparkles, Terminal, Upload, Users, X, UserRound, Zap, ZoomIn,
 } from "lucide-react";
 
 import {
@@ -187,65 +187,234 @@ function UserAvatar({ user, className = "" }: { user: { photoUrl?: string | null
   return <img className={`user-avatar ${className}`} src={user.photoUrl || fallback} alt={`${user.name} profile`} onError={(event) => { if (event.currentTarget.src !== new URL(fallback, window.location.href).href) event.currentTarget.src = fallback; }} />;
 }
 
-function BrandMark() {
+function BrandMark({ className = "" }: { className?: string }) {
   return (
-    <div className="brand" aria-label="MetaMinds Pvt. Ltd.">
-      <span className="brand-icon">
-        <img src="/meta-minds-pvt-ltd.png" alt="" />
-      </span>
-      <span className="brand-copy">
-        <span className="brand-name">MetaMinds</span>
-        <span className="brand-legal">Pvt. Ltd.</span>
-      </span>
+    <div className={`brand-header-lockup ${className}`} aria-label="MetaMinds Pvt. Ltd.">
+      <div className="brand-logo-tile">
+        <img
+          src="/meta-minds-pvt-ltd.png"
+          alt="MetaMinds Pvt. Ltd."
+          className="brand-logo-img"
+        />
+      </div>
+      <div className="brand-text-stack">
+        <span className="brand-title-bold">MetaMinds</span>
+        <span className="brand-title-sub">Pvt. Ltd.</span>
+      </div>
+    </div>
+  );
+}
+
+function AuthShellBackgroundIcons() {
+  return (
+    <div className="auth-shell-backside-icons" aria-hidden="true">
+      <span className="shell-bg-icon shell-icon-1"><Code size={36} /></span>
+      <span className="shell-bg-icon shell-icon-2"><Layers size={40} /></span>
+      <span className="shell-bg-icon shell-icon-3"><Sparkles size={28} /></span>
+      <span className="shell-bg-icon shell-icon-4"><Globe size={38} /></span>
+      <span className="shell-bg-icon shell-icon-5"><Cpu size={34} /></span>
+      <span className="shell-bg-icon shell-icon-6"><Palette size={34} /></span>
+      <span className="shell-bg-icon shell-icon-7"><Compass size={38} /></span>
+      <span className="shell-bg-icon shell-icon-8"><Terminal size={32} /></span>
+      <span className="shell-bg-icon shell-icon-9"><Zap size={30} /></span>
+      <span className="shell-bg-icon shell-icon-10"><Shield size={36} /></span>
+      <span className="shell-bg-icon shell-icon-11"><Activity size={32} /></span>
+      <span className="shell-bg-icon shell-icon-12"><FileCheck2 size={34} /></span>
     </div>
   );
 }
 
 function AuthAside() {
   return (
-    <aside className="auth-aside" aria-label="MetaMinds employee community overview">
-      <div className="aside-graphic" aria-hidden="true"><span /><span /><span /></div>
-      <div className="aside-header">
-        <div className="aside-brand-chip"><img src="/meta-minds-pvt-ltd.png" alt="" /><span>MetaMinds</span></div>
+    <aside className="auth-aside" aria-label="MetaMinds portal overview">
+      {/* Concentric Ambient Blue Ripples (from Image 2) */}
+      <div className="aside-ripples" aria-hidden="true">
+        <span className="ripple-circle ripple-1" />
+        <span className="ripple-circle ripple-2" />
+        <span className="ripple-circle ripple-3" />
       </div>
-      <div className="aside-illustration">
-        <div className="illustration-panel" aria-hidden="true">
-          <div className="floating-card card-top">
-            <span className="card-label">Team engagement</span>
-            <strong>94%</strong>
-            <small>+8% this quarter</small>
-          </div>
-          <div className="floating-card card-left">
-            <span className="card-label">Employee growth</span>
-            <strong>+12%</strong>
-            <small>New hires</small>
-          </div>
-          <div className="floating-card card-right">
-            <span className="card-label">Attendance</span>
-            <strong>86%</strong>
-            <small>Live overview</small>
-          </div>
-          <div className="team-scene">
-            <div className="team-avatars">
-              <span className="avatar one">AM</span>
-              <span className="avatar two">RN</span>
-              <span className="avatar three">SK</span>
+
+      {/* Background Animated Aurora Orbs matching Company Logo Blues */}
+      <div className="aside-aurora" aria-hidden="true">
+        <span className="aurora-orb aurora-orb-1" />
+        <span className="aurora-orb aurora-orb-2" />
+        <span className="aurora-orb aurora-orb-3" />
+        <div className="aside-grid-pattern" />
+      </div>
+
+      {/* Floating Animated Status & Metric Capsules Orbiting the Whole Section */}
+      <div className="aside-orbit-layer" aria-hidden="true">
+        <div className="floating-orbit-pill orbit-pill-1" title="Live System Performance">
+          <span className="orbit-pulse-dot" />
+          <span className="orbit-pill-title">System Uptime</span>
+          <span className="orbit-pill-val">99.8%</span>
+        </div>
+
+        <div className="floating-orbit-pill orbit-pill-2" title="Active Engineering Sprint">
+          <Activity size={13} className="orbit-ico-cyan" />
+          <span className="orbit-pill-title">Sprint 12 · 18 Tasks</span>
+          <span className="orbit-pill-badge">Active</span>
+        </div>
+
+        <div className="floating-orbit-pill orbit-pill-3" title="Bespoke Web Design & UI/UX Studio">
+          <Sparkles size={13} className="orbit-ico-gold" />
+          <span className="orbit-pill-title">Pixel-Perfect UI/UX Studio</span>
+        </div>
+
+        <div className="floating-orbit-pill orbit-pill-4" title="Enterprise Authentication & TLS 1.3">
+          <ShieldCheck size={13} className="orbit-ico-emerald" />
+          <span className="orbit-pill-title">256-Bit TLS · SSO Ready</span>
+        </div>
+      </div>
+
+      {/* Top Header: Company Logo in Rounded Card + System Up Status Pill (Directly from Image 1) */}
+      <div className="aside-top-bar brand-solo-bar">
+        <div className="aside-brand-card" title="MetaMinds Pvt. Ltd.">
+          <img
+            src="/meta-minds-pvt-ltd.png"
+            alt="MetaMinds Pvt. Ltd."
+            className="aside-brand-logo-hero"
+          />
+        </div>
+        <div className="aside-system-pill" title="Core Services Operational">
+          <span className="system-pill-dot" />
+          <span className="system-pill-text">System Up...</span>
+        </div>
+      </div>
+
+      {/* Hero Headline & Subheadline (MetaMinds Products, Services & Web Design) */}
+      <div className="aside-hero-copy">
+        <h2 className="aside-hero-heading">
+          Products, Services &amp; <span className="hero-heading-bold">Web Design</span>
+        </h2>
+        <p className="aside-hero-desc">
+          MetaMinds Pvt. Ltd. delivers cutting-edge SaaS platforms, bespoke web design, and dedicated technology services engineered to scale modern enterprises.
+        </p>
+      </div>
+
+      {/* Tab/Site Structure Representing the Dashboard (Directly matching Image 2 preview) */}
+      <div className="aside-preview-wrapper" aria-hidden="true">
+        <div className="portal-site-frame">
+          {/* Site Window Title Bar */}
+          <div className="portal-frame-bar">
+            <div className="portal-brand-block">
+              <span className="portal-brand-dot">❖</span>
+              <span className="portal-brand-name">MetaMinds</span>
             </div>
-            <div className="scene-board">
-              <span className="board-pill">Connected teams</span>
-              <div className="board-bars"><i /><i /><i /><i /></div>
+            <div className="portal-frame-center">
+              <span className="portal-badge-live">● Workspace Portal</span>
+            </div>
+          </div>
+
+          <div className="portal-frame-grid">
+            {/* Left Mini Sidebar */}
+            <nav className="portal-mini-nav">
+              <div className="mini-nav-item active">
+                <LayoutDashboard size={12} className="nav-item-icon" />
+                <span>Dashboard</span>
+                <ChevronDown size={10} className="nav-chevron" />
+              </div>
+              <div className="mini-nav-item">
+                <Mail size={12} className="nav-item-icon" />
+                <span>Inbox</span>
+                <span className="mini-nav-counter">3</span>
+              </div>
+              <div className="mini-nav-item">
+                <FileCheck2 size={12} className="nav-item-icon" />
+                <span>Tasks</span>
+              </div>
+
+              <div className="mini-nav-heading">YOU</div>
+
+              <div className="mini-nav-item">
+                <UserRound size={12} className="nav-item-icon" />
+                <span>Me</span>
+                <ChevronDown size={10} className="nav-chevron" />
+              </div>
+              <div className="mini-nav-item">
+                <Sparkles size={12} className="nav-item-icon" />
+                <span>Happiness</span>
+              </div>
+              <div className="mini-nav-item">
+                <Clock3 size={12} className="nav-item-icon" />
+                <span>Clock In</span>
+              </div>
+              <div className="mini-nav-item">
+                <CalendarDays size={12} className="nav-item-icon" />
+                <span>Time off</span>
+              </div>
+              <div className="mini-nav-item">
+                <Activity size={12} className="nav-item-icon" />
+                <span>Evaluation</span>
+              </div>
+            </nav>
+
+            {/* Main Portal Content Surface */}
+            <div className="portal-mini-main">
+              <div className="mini-main-header">
+                <span className="mini-portal-title">Employee's Portal</span>
+              </div>
+
+              {/* Top Widgets Row: Clock In + Events */}
+              <div className="mini-widgets-row">
+                {/* Clock In Widget */}
+                <div className="mini-card clockin-card">
+                  <div className="mini-card-head">
+                    <Clock3 size={10} className="mini-head-ico" />
+                    <span>Clock In</span>
+                  </div>
+                  <div className="clockin-body">
+                    <span className="clockin-digits">0h 00m</span>
+                    <span className="clockin-sub">Today</span>
+                  </div>
+                  <button type="button" className="mini-start-btn">Start</button>
+                </div>
+
+                {/* Events Widget */}
+                <div className="mini-card events-card">
+                  <div className="mini-card-head">
+                    <CalendarDays size={10} className="mini-head-ico" />
+                    <span>Events</span>
+                  </div>
+                  <div className="events-body">
+                    <span className="event-pill-icon">🎉</span>
+                    <span className="event-title">Sprint Demo</span>
+                    <span className="event-sub">tomorrow</span>
+                  </div>
+                  <div className="events-dots-row">
+                    <span className="ev-dot active" />
+                    <span className="ev-dot" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Tasks Widget */}
+              <div className="mini-card tasks-card">
+                <div className="mini-card-head">
+                  <FileCheck2 size={10} className="mini-head-ico" />
+                  <span>Tasks</span>
+                </div>
+                <div className="mini-task-items">
+                  <div className="mini-task-entry">
+                    <span className="task-bullet-chip">✏️</span>
+                    <div className="task-entry-texts">
+                      <span className="task-entry-title">Assigned task: Finish Employee Portal design</span>
+                      <span className="task-entry-sub">Finish Time Off &amp; News cards</span>
+                    </div>
+                  </div>
+                  <div className="mini-task-entry">
+                    <span className="task-bullet-chip">✏️</span>
+                    <div className="task-entry-texts">
+                      <span className="task-entry-title">Review Cloud Architecture Sprint</span>
+                      <span className="task-entry-sub">High-performance production check</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-        <p className="illustration-note">Illustrative workspace preview · sample figures</p>
       </div>
-      <div className="aside-copy">
-        <span className="aside-kicker">PEOPLE & CULTURE PLATFORM</span>
-        <h2>Great work starts with <span>great people.</span></h2>
-        <p>Your people. Your progress. Everything that helps your team do its best work, all in one place.</p>
-        <div className="aside-caption"><ShieldCheck size={18} /> A space for your people to thrive.</div>
-      </div>
-      <div className="aside-footer"><span>MetaMinds Pvt. Ltd.</span><span>People portal</span></div>
     </aside>
   );
 }
@@ -256,18 +425,38 @@ function OverviewHero({ user, today, label, description, action }: { user: User;
   const dateLabel = today
     ? new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(new Date(`${today}T12:00:00`))
     : "Today";
-  return <section className="overview-hero">
-    <div className="overview-hero-copy">
-      <div className="hero-meta"><span className="hero-tag"><Activity size={14} /> {label}</span><span className="hero-date"><CalendarDays size={14} /> {dateLabel}</span></div>
-      <h1>{greeting}, {user.name.split(" ")[0]}</h1>
-      <p>{description}</p>
-      {action && <div className="hero-action">{action}</div>}
-    </div>
-    <aside className="hero-account">
-      <span className="hero-live"><i /> Live portal · Authenticated</span>
-      <div className="hero-user"><UserAvatar user={user} className="hero-user-avatar" /><span><strong>{user.email}</strong><small>{user.position || user.role.replace("_", " ")}</small></span></div>
-    </aside>
-  </section>;
+  const rawName = user.name || user.email.split("@")[0];
+  const displayName = rawName.includes(".")
+    ? rawName.split(".")[0].charAt(0).toUpperCase() + rawName.split(".")[0].slice(1)
+    : rawName.split(" ")[0];
+
+  return (
+    <header className="overview-hero">
+      <div className="overview-hero-copy">
+        <div className="hero-meta">
+          <span className="hero-tag">
+            <Activity size={13} /> {label}
+          </span>
+          <span className="hero-sep">·</span>
+          <span className="hero-date">
+            <CalendarDays size={13} /> {dateLabel}
+          </span>
+          <span className="hero-sep">·</span>
+          <span className="hero-live-pill">
+            <span className="live-dot" />
+            Live Portal
+          </span>
+        </div>
+
+        <h1 className="hero-heading">
+          {greeting}, <span className="hero-name">{displayName}</span>
+        </h1>
+        <p className="hero-desc">{description}</p>
+
+        {action && <div className="hero-action">{action}</div>}
+      </div>
+    </header>
+  );
 }
 
 function Button({ children, variant = "primary", className, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "quiet" | "danger" }) {
@@ -544,155 +733,252 @@ function CustomDatePicker({
   );
 }
 
-type DemoAccountInfo = {
-  role: "ceo";
-  title: string;
-  badge: string;
-  email: string;
-  password: string;
-  description: string;
-};
-
-const DEFAULT_DEMO_ACCOUNTS: DemoAccountInfo[] = [
-  {
-    role: "ceo",
-    title: "CEO Portal",
-    badge: "EXECUTIVE",
-    email: "demo.ceo@metaminds.local",
-    password: "Demo@Password123",
-    description: "Workforce stats, approvals & audit log",
-  },
-];
-
-function Login({ onLogin, onDemoLogin, onRegister, onForgot }: { onLogin: (identifier: string, password: string) => Promise<void>; onDemoLogin: (role: "ceo") => Promise<void>; onRegister: () => void; onForgot: () => void }) {
-  const [identifier, setIdentifier] = useState("");
+function Login({ onLogin, onRegister, onForgot, initialIdentifier }: { onLogin: (identifier: string, password: string) => Promise<void>; onDemoLogin?: (role: "ceo") => Promise<void>; onRegister: () => void; onForgot: () => void; initialIdentifier?: string }) {
+  const [identifier, setIdentifier] = useState(initialIdentifier || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [demoBusyRole, setDemoBusyRole] = useState<"ceo" | null>(null);
+  const [capsLockWarning, setCapsLockWarning] = useState(false);
+  const [userInteractedIdentifier, setUserInteractedIdentifier] = useState(false);
+  const [userInteractedPassword, setUserInteractedPassword] = useState(false);
+
+  // Set initial identifier or clear browser autofill of job position
+  useEffect(() => {
+    if (initialIdentifier) {
+      setIdentifier(initialIdentifier);
+    } else {
+      setIdentifier("");
+    }
+    setPassword("");
+    const t1 = setTimeout(() => {
+      setIdentifier((prev) => {
+        if (initialIdentifier && prev === initialIdentifier) return prev;
+        return (prev.toLowerCase().includes("developer") || prev.toLowerCase().includes("engineer") || prev.toLowerCase().includes("designer") ? "" : prev);
+      });
+    }, 150);
+    const t2 = setTimeout(() => {
+      setIdentifier((prev) => {
+        if (initialIdentifier && prev === initialIdentifier) return prev;
+        return (prev.toLowerCase().includes("developer") || prev.toLowerCase().includes("engineer") || prev.toLowerCase().includes("designer") ? "" : prev);
+      });
+    }, 450);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [initialIdentifier]);
+
+  const isApplicationRef = identifier.trim().toUpperCase().startsWith("MM-APP-");
+
+  function handlePasswordKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.getModifierState("CapsLock")) {
+      setCapsLockWarning(true);
+    } else {
+      setCapsLockWarning(false);
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy || demoBusyRole) return;
+    if (busy) return;
     setBusy(true);
     setError("");
-    if (/^MM-APP-/i.test(identifier.trim())) {
-      setError("That is an application reference, not a sign-in ID. Use your work email or the employee ID in your approval email (MM-YYYY-NNNN). Sign-in is available after approval.");
-      setBusy(false);
-      return;
-    }
     try {
       await onLogin(identifier, password);
-    } catch {
-      setError("We couldn’t sign you in. Check your details and try again.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "We couldn’t sign you in. Check your details and try again.");
     } finally {
       setBusy(false);
     }
-  }
-
-  async function handleDemoDirectLogin(role: "ceo") {
-    if (busy || demoBusyRole) return;
-    setDemoBusyRole(role);
-    setError("");
-    try {
-      await onDemoLogin(role);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to sign in with dummy account.");
-    } finally {
-      setDemoBusyRole(null);
-    }
-  }
-
-  function handleAutofill(account: DemoAccountInfo) {
-    setIdentifier(account.email);
-    setPassword(account.password);
-    setError("");
   }
 
   return (
     <main className="auth-shell">
-      <section className="auth-card">
-        <BrandMark />
-        <div className="auth-form-header">
-          <p className="eyebrow">EMPLOYEE & LEADERSHIP PORTAL</p>
-          <h1>Welcome back.</h1>
-        </div>
-        <p className="auth-lead">Sign in to your workspace or explore with dummy portal accounts.</p>
+      <AuthShellBackgroundIcons />
+      <div className="auth-container">
+        <AuthAside />
 
-        <div className="dummy-login-box">
-          <div className="dummy-login-header">
-            <span className="dummy-login-tag"><Sparkles size={13} /> DUMMY PORTAL LOGIN</span>
-            <span className="dummy-pwd-badge">Password: <code>Demo@Password123</code></span>
-          </div>
-          <div className="dummy-cards-grid">
-            {DEFAULT_DEMO_ACCOUNTS.map((acc) => {
-              const isLoading = demoBusyRole === acc.role;
-              return (
-                <div key={acc.role} className="dummy-card dummy-card-ceo">
-                  <div className="dummy-card-top">
-                    <span className="dummy-role-icon icon-ceo">
-                      <ShieldCheck size={18} />
-                    </span>
-                    <span className="dummy-card-title">{acc.title}</span>
-                    <span className="dummy-pill pill-ceo">{acc.badge}</span>
-                  </div>
-                  <p className="dummy-card-desc">{acc.description}</p>
-                  <div className="dummy-card-meta">
-                    <button
-                      type="button"
-                      className="dummy-meta-pill"
-                      title="Click to autofill into form"
-                      onClick={() => handleAutofill(acc)}
-                    >
-                      <span>{acc.email}</span>
-                      <small>FILL</small>
-                    </button>
-                  </div>
+        <section className="auth-card" aria-label="Sign in to MetaMinds">
+          {/* Glow halo behind card */}
+          <div className="card-ambient-glow" aria-hidden="true" />
+
+          <div className="auth-card-inner">
+            {/* Top Brand & Security Chip (Prominently Increased Sizing from Image 3) */}
+            <div className="login-card-top">
+              <BrandMark />
+              <div className="sso-badge">
+                <Shield size={12} className="sso-icon" />
+                <span>SSO Ready</span>
+              </div>
+            </div>
+
+            {/* Header Content (Directly from Image 3 Reference) */}
+            <div className="auth-form-header">
+              <span className="login-eyebrow">EMPLOYEE &amp; LEADERSHIP PORTAL</span>
+              <h1 className="login-title">Welcome back</h1>
+              <p className="login-subtitle">Sign in to your account with your work email or employee ID.</p>
+            </div>
+
+            <form onSubmit={submit} className="form-stack login-form" aria-busy={busy} autoComplete="off">
+              {/* Invisible decoy inputs to absorb browser autofill */}
+              <input
+                type="text"
+                name="autofill_decoy_user"
+                tabIndex={-1}
+                aria-hidden="true"
+                style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0, top: -9999, left: -9999 }}
+              />
+              <input
+                type="password"
+                name="autofill_decoy_pass"
+                tabIndex={-1}
+                aria-hidden="true"
+                style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0, top: -9999, left: -9999 }}
+              />
+
+              {/* Identifier Input Field (Empty by default, showing placeholder, autofill disabled) */}
+              <div className="auth-field-group">
+                <label htmlFor="login-identifier" className="auth-field-label">
+                  <span>Work email or employee ID</span>
+                </label>
+                <div className="clean-input-wrap">
+                  <input
+                    id="login-identifier"
+                    name="employee_portal_signin_id"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    type="text"
+                    required
+                    readOnly={!userInteractedIdentifier}
+                    onFocus={() => setUserInteractedIdentifier(true)}
+                    onClick={() => setUserInteractedIdentifier(true)}
+                    value={identifier}
+                    onChange={(event) => {
+                      const val = event.target.value;
+                      if (!userInteractedIdentifier && (val.toLowerCase().includes("developer") || val.toLowerCase().includes("engineer") || val.toLowerCase().includes("designer") || val.toLowerCase().includes("frontend"))) {
+                        setIdentifier("");
+                        return;
+                      }
+                      setIdentifier(val);
+                    }}
+                    placeholder="e.g. MM-YYYY-NNNN or you@metaminds.local"
+                    className="clean-auth-input"
+                  />
+                </div>
+              </div>
+
+              {/* Password Input Field with inline Forgot Password (Directly from Image 3) */}
+              <div className="auth-field-group">
+                <div className="auth-label-row">
+                  <label htmlFor="login-password" className="auth-field-label">
+                    <span>Password</span>
+                  </label>
                   <button
                     type="button"
-                    className="dummy-action-btn btn-ceo"
-                    disabled={busy || Boolean(demoBusyRole)}
-                    onClick={() => void handleDemoDirectLogin(acc.role)}
+                    className="forgot-link-btn"
+                    onClick={onForgot}
                   >
-                    {isLoading ? "Signing in…" : "Login as CEO"}
-                    {!isLoading && <ArrowUpRight size={14} />}
+                    Forgot password?
                   </button>
                 </div>
-              );
-            })}
-          </div>
-        </div>
+                <div className="clean-input-wrap password-wrap">
+                  <input
+                    id="login-password"
+                    name="employee_portal_signin_pw"
+                    autoComplete="new-password"
+                    type={showPassword ? "text" : "password"}
+                    required
+                    readOnly={!userInteractedPassword}
+                    onFocus={() => setUserInteractedPassword(true)}
+                    onClick={() => setUserInteractedPassword(true)}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    onKeyDown={handlePasswordKeyDown}
+                    onKeyUp={handlePasswordKeyDown}
+                    placeholder="••••••••••••"
+                    className="clean-auth-input"
+                  />
+                  <button
+                    type="button"
+                    className="password-peek-btn"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                    onClick={() => setShowPassword((prev) => !prev)}
+                  >
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+                {capsLockWarning && (
+                  <p className="field-hint-warning">
+                    <span>⚠️ Caps Lock is active</span>
+                  </p>
+                )}
+              </div>
 
-        <div className="auth-divider"><span>OR SIGN IN MANUALLY</span></div>
+              {/* Application Reference Warning Callout (Matching Image 2) */}
+              {isApplicationRef && (
+                <div className="form-info-callout" role="alert">
+                  <span>That is an application reference, not a sign-in ID. Use your work email or the employee ID in your approval email (MM-YYYY-NNNN). Sign-in is available after approval.</span>
+                </div>
+              )}
 
-        <form onSubmit={submit} className="form-stack login-form" aria-busy={busy || Boolean(demoBusyRole)}>
-          <label className="auth-field">
-            <span>Work email or employee ID</span>
-            <input autoComplete="username" type="text" required value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="name@metaminds.com, MM-0042, or ceo" />
-          </label>
-          <label className="auth-field">
-            <span>Password</span>
-            <div className="password-field">
-              <input autoComplete="current-password" type={showPassword ? "text" : "password"} required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" />
-              <button className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} type="button" onClick={() => setShowPassword((current) => !current)}>
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              {/* Error Message */}
+              {error && (
+                <div className="form-error-banner" role="alert">
+                  <span className="error-icon">!</span>
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {/* Primary Sign In Button (Matching Image 2 with Company Colors) */}
+              <button
+                type="submit"
+                className={`image2-submit-btn ${busy ? "is-loading" : ""}`}
+                disabled={busy}
+              >
+                <span className="submit-btn-shimmer" aria-hidden="true" />
+                <span className="submit-btn-content">
+                  {busy ? (
+                    <>
+                      <span className="btn-spinner" aria-hidden="true" />
+                      <span>Signing in…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Sign in</span>
+                      <ArrowUpRight size={15} className="btn-arrow" />
+                    </>
+                  )}
+                </span>
               </button>
+              <span className="native-checkbox-hidden" role="status" aria-live="polite">
+                {busy ? "Signing in, please wait." : ""}
+              </span>
+            </form>
+
+            {/* Divider (NEW TO METAMINDS? from Image 2) */}
+            <div className="auth-modern-divider">
+              <span className="divider-line" />
+              <span className="divider-text">NEW TO METAMINDS?</span>
+              <span className="divider-line" />
             </div>
-          </label>
-          <div className="auth-row">
-            <span className="auth-helper"><Sparkles size={14} /> Secure workspace access</span>
-            <button className="text-button forgot-link" type="button" onClick={onForgot}>Forgot password?</button>
+
+            {/* Secondary Action: Apply to join the team (Matching Image 2, CEO button removed) */}
+            <button
+              type="button"
+              className="image2-secondary-btn"
+              onClick={onRegister}
+            >
+              <span>Apply to join the team</span>
+            </button>
+
+            {/* Footnote (Matching Image 2) */}
+            <div className="auth-provision-footnote">
+              <span>Access is provisioned only after authorized approval.</span>
+            </div>
           </div>
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <Button type="submit" className="login-submit" disabled={busy || Boolean(demoBusyRole)}>{busy ? "Signing in…" : "Sign in"}<ArrowUpRight size={16} /></Button>
-          <span className="sr-only" role="status" aria-live="polite">{busy || demoBusyRole ? "Signing in, please wait." : ""}</span>
-        </form>
-        <div className="auth-divider"><span>New to MetaMinds?</span></div>
-        <Button variant="secondary" className="apply-button" onClick={onRegister}>Apply to join the team</Button>
-        <p className="auth-footnote">Access is provisioned only after authorized approval.</p>
-      </section>
-      <AuthAside />
+        </section>
+      </div>
     </main>
   );
 }
@@ -794,7 +1080,7 @@ function DocumentUploadBox({
   );
 }
 
-function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (reference: string, emailQueued: boolean) => void }) {
+function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (submission: { reference: string; email: string; fullName: string; position: string; emailQueued: boolean }) => void }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
     firstName: "",
@@ -807,7 +1093,6 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
     department: "",
     workMode: "hybrid",
     proposedJoiningDate: "",
-    noticePeriod: "immediate",
     discussedSalary: "",
     education: "",
     education10thDoc: "",
@@ -944,9 +1229,8 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
         return;
       }
       if (step === 3) {
-        if (!form.position.trim()) throw new Error("Please specify your requested position / role.");
+        if (!form.position.trim()) throw new Error("Please specify your position / role.");
         if (!form.department.trim()) throw new Error("Please specify your department or practice area.");
-        if (!form.proposedJoiningDate) throw new Error("Please select your proposed joining date.");
         if (!form.discussedSalary.trim()) throw new Error("Please provide your discussed salary.");
         if (form.password.length < 12) throw new Error("Password must be at least 12 characters.");
         if (!/[A-Z]/.test(form.password)) throw new Error("Password must include at least one capital letter (A-Z).");
@@ -976,7 +1260,7 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
       if (!form.privacyAcknowledged) {
         throw new Error("Please certify the accuracy of your details and KYC documents.");
       }
-      const result = await api<{ reference: string; confirmationEmailQueued: boolean }>("/api/applications", {
+      const result = await api<{ reference: string; confirmationEmailQueued: boolean; fullName?: string; email?: string; position?: string }>("/api/applications", {
         method: "POST",
         body: JSON.stringify({
           firstName: form.firstName,
@@ -985,7 +1269,7 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
           employmentType: form.employmentType,
           position: form.position,
           department: form.department,
-          proposedJoiningDate: form.proposedJoiningDate,
+          proposedJoiningDate: form.proposedJoiningDate || new Date().toISOString().slice(0, 10),
           discussedSalary: form.discussedSalary,
           education: form.education,
           education10thDoc: form.education10thDoc || undefined,
@@ -1000,7 +1284,13 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
           photoUrl: form.photoUrl || undefined,
         }),
       });
-      onSubmitted(result.reference, result.confirmationEmailQueued);
+      onSubmitted({
+        reference: result.reference,
+        email: form.email,
+        fullName: `${form.firstName} ${form.lastName}`.trim(),
+        position: form.position,
+        emailQueued: result.confirmationEmailQueued,
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to submit your application.");
     } finally {
@@ -1207,14 +1497,14 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
                 </select>
               </label>
               <label>
-                <span>Requested Position / Designation <b>*</b></span>
+                <span>Position / Designation <b>*</b></span>
                 <input required maxLength={120} value={form.position} onChange={(event) => update("position", event.target.value)} placeholder="e.g. Senior Frontend Engineer" />
               </label>
               <label>
                 <span>Department or Practice Area <b>*</b></span>
                 <input required maxLength={100} value={form.department} onChange={(event) => update("department", event.target.value)} placeholder="e.g. Engineering, Product Design, Operations" />
               </label>
-              <label>
+              <label className="full-width">
                 <span>Preferred Work Mode</span>
                 <select value={form.workMode || "hybrid"} onChange={(event) => update("workMode", event.target.value)}>
                   <option value="hybrid">Hybrid (Office & Remote)</option>
@@ -1222,31 +1512,23 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (r
                   <option value="remote">Remote (India)</option>
                 </select>
               </label>
-              <label>
-                <span>Proposed Joining Date <b>*</b></span>
-                <CustomDatePicker
-                  value={form.proposedJoiningDate}
-                  onChange={(val) => update("proposedJoiningDate", val)}
-                  placeholder="Select proposed joining date"
-                  required
-                />
-              </label>
-              <label>
-                <span>Notice Period / Availability <b>*</b></span>
-                <select value={form.noticePeriod || "immediate"} onChange={(event) => update("noticePeriod", event.target.value)}>
-                  <option value="immediate">Immediate Joiner (Ready to join)</option>
-                  <option value="15_days">15 Days Notice Period</option>
-                  <option value="30_days">30 Days Notice Period</option>
-                  <option value="45_days">45 Days Notice Period</option>
-                  <option value="60_days">60 Days Notice Period</option>
-                  <option value="serving_notice">Currently Serving Notice Period</option>
-                </select>
-              </label>
               <label className="full-width">
                 <span>Discussed Monthly Salary (₹ INR) <b>*</b></span>
                 <input required maxLength={50} value={form.discussedSalary} onChange={(event) => update("discussedSalary", event.target.value)} placeholder="e.g. ₹60,000 / month or 60000" />
                 <small className="field-help">Monthly compensation agreed during interview. Upon CEO approval, this automatically provisions your salary structure (50% Basic, 30% HRA, 20% Special) in the live Payroll register.</small>
               </label>
+
+              {/* Explicit hidden username field with applicant email so browsers never associate position with password */}
+              <input
+                type="text"
+                name="username"
+                autoComplete="username"
+                value={form.email}
+                readOnly
+                tabIndex={-1}
+                aria-hidden="true"
+                style={{ position: "absolute", opacity: 0, pointerEvents: "none", width: 0, height: 0 }}
+              />
 
               <label className="password-input-col">
                 <span>Create Portal Password <b>*</b></span>
@@ -1458,7 +1740,56 @@ function Activate({ token, onDone }: { token: string; onDone: () => void }) {
       setBusy(false);
     }
   }
-  return <main className="auth-shell"><section className="auth-card"><BrandMark /><p className="eyebrow">ACCOUNT SETUP</p><h1>Activate your account</h1><p className="auth-lead">Create a strong password to finish setting up your MetaMinds Pvt. Ltd. account.</p><form className="form-stack" onSubmit={submit}><label>New password<input required minLength={12} maxLength={256} type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /><small>Use at least 12 characters.</small></label><label>Confirm password<input required minLength={12} maxLength={256} type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>{error && <p className="form-error" role="alert">{error}</p>}<Button disabled={busy}>{busy ? "Activating…" : "Set password"}<Check size={16} /></Button></form></section>    <AuthAside /></main>;}
+  return (
+    <main className="auth-shell">
+      <AuthShellBackgroundIcons />
+      <div className="auth-container">
+        <AuthAside />
+        <section className="auth-card">
+          <div className="card-ambient-glow" aria-hidden="true" />
+          <div className="auth-card-inner">
+            <BrandMark />
+            <p className="eyebrow">ACCOUNT SETUP</p>
+            <h1>Activate your account</h1>
+            <p className="auth-lead">Create a strong password to finish setting up your MetaMinds Pvt. Ltd. account.</p>
+            <form className="form-stack" onSubmit={submit}>
+              <label>
+                New password
+                <input
+                  required
+                  minLength={12}
+                  maxLength={256}
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <small>Use at least 12 characters.</small>
+              </label>
+              <label>
+                Confirm password
+                <input
+                  required
+                  minLength={12}
+                  maxLength={256}
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirm}
+                  onChange={(event) => setConfirm(event.target.value)}
+                />
+              </label>
+              {error && <p className="form-error" role="alert">{error}</p>}
+              <Button disabled={busy}>
+                {busy ? "Activating…" : "Set password"}
+                <Check size={16} />
+              </Button>
+            </form>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
 
 function PasswordReset({ token, onDone, onBack }: { token?: string; onDone: () => void; onBack: () => void }) {
   const [email, setEmail] = useState("");
@@ -1518,7 +1849,123 @@ function PasswordReset({ token, onDone, onBack }: { token?: string; onDone: () =
       setBusy(false);
     }
   }
-  return <main className="auth-shell"><section className="auth-card"><BrandMark /><p className="eyebrow">ACCOUNT RECOVERY</p><h1>{token ? "Choose a new password" : "Reset your password"}</h1><p className="auth-lead">{token ? "Use a strong password you have not used before." : "Enter the work email on your approved account. A one-time reset link is sent by email; employee IDs and application references cannot be used here."}</p>{!token && emailStatus === "not-configured" && <div className="notice notice-warning"><ShieldCheck size={17} /><span>Email delivery is not configured, so password reset links cannot be sent right now. Contact your administrator for help.</span></div>}{!token && emailStatus === "unavailable" && <div className="notice notice-warning"><ShieldCheck size={17} /><span>Email delivery setup could not be checked. You can still submit a request, but contact your administrator if no reset email arrives.</span></div>}{message ? <><div className="notice notice-info"><ShieldCheck size={17} /><span>{message} Check your inbox and spam folder for the one-time link. If no message arrives, check the address and contact your administrator; for your security, we cannot confirm whether an account exists.</span></div>{emailStatus === "not-configured" && <div className="notice notice-warning"><ShieldCheck size={17} /><span>No email could be sent until an administrator configures email delivery.</span></div>}</> : <form className="form-stack" noValidate onSubmit={submit}>{token ? <><label>New password<input required minLength={12} maxLength={256} type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /><small>Use at least 12 characters.</small></label><label>Confirm password<input required minLength={12} maxLength={256} type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label></> : <label>Email<input required maxLength={254} type="email" autoComplete="email" aria-invalid={Boolean(error)} aria-describedby={error ? "reset-email-error" : undefined} value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} /></label>}{error && <p id={!token ? "reset-email-error" : undefined} className="form-error" role="alert">{error}</p>}<Button disabled={busy}>{busy ? "Please wait…" : token ? "Update password" : "Send reset link"}<ArrowUpRight size={16} /></Button></form>}<button className="text-button reset-back" onClick={() => { if (token) window.history.replaceState({}, "", window.location.pathname); (message ? onDone : onBack)(); }}>{message ? "Return to sign in" : "Back to sign in"}</button></section>  <AuthAside /></main>;}
+  return (
+    <main className="auth-shell">
+      <AuthShellBackgroundIcons />
+      <div className="auth-container">
+        <AuthAside />
+        <section className="auth-card">
+          <div className="card-ambient-glow" aria-hidden="true" />
+          <div className="auth-card-inner">
+            <BrandMark />
+            <p className="eyebrow">ACCOUNT RECOVERY</p>
+            <h1>{token ? "Choose a new password" : "Reset your password"}</h1>
+            <p className="auth-lead">
+              {token
+                ? "Use a strong password you have not used before."
+                : "Enter the work email on your approved account. A one-time reset link is sent by email; employee IDs and application references cannot be used here."}
+            </p>
+            {!token && emailStatus === "not-configured" && (
+              <div className="notice notice-warning">
+                <ShieldCheck size={17} />
+                <span>Email delivery is not configured, so password reset links cannot be sent right now. Contact your administrator for help.</span>
+              </div>
+            )}
+            {!token && emailStatus === "unavailable" && (
+              <div className="notice notice-warning">
+                <ShieldCheck size={17} />
+                <span>Email delivery setup could not be checked. You can still submit a request, but contact your administrator if no reset email arrives.</span>
+              </div>
+            )}
+            {message ? (
+              <>
+                <div className="notice notice-info">
+                  <ShieldCheck size={17} />
+                  <span>
+                    {message} Check your inbox and spam folder for the one-time link. If no message arrives, check the address and contact your administrator; for your security, we cannot confirm whether an account exists.
+                  </span>
+                </div>
+                {emailStatus === "not-configured" && (
+                  <div className="notice notice-warning">
+                    <ShieldCheck size={17} />
+                    <span>No email could be sent until an administrator configures email delivery.</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <form className="form-stack" noValidate onSubmit={submit}>
+                {token ? (
+                  <>
+                    <label>
+                      New password
+                      <input
+                        required
+                        minLength={12}
+                        maxLength={256}
+                        type="password"
+                        autoComplete="new-password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                      />
+                      <small>Use at least 12 characters.</small>
+                    </label>
+                    <label>
+                      Confirm password
+                      <input
+                        required
+                        minLength={12}
+                        maxLength={256}
+                        type="password"
+                        autoComplete="new-password"
+                        value={confirm}
+                        onChange={(event) => setConfirm(event.target.value)}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <label>
+                    Email
+                    <input
+                      required
+                      maxLength={254}
+                      type="email"
+                      autoComplete="email"
+                      aria-invalid={Boolean(error)}
+                      aria-describedby={error ? "reset-email-error" : undefined}
+                      value={email}
+                      onChange={(event) => {
+                        setEmail(event.target.value);
+                        setError("");
+                      }}
+                    />
+                  </label>
+                )}
+                {error && (
+                  <p id={!token ? "reset-email-error" : undefined} className="form-error" role="alert">
+                    {error}
+                  </p>
+                )}
+                <Button disabled={busy}>
+                  {busy ? "Please wait…" : token ? "Update password" : "Send reset link"}
+                  <ArrowUpRight size={16} />
+                </Button>
+              </form>
+            )}
+            <button
+              className="text-button reset-back"
+              onClick={() => {
+                if (token) window.history.replaceState({}, "", window.location.pathname);
+                (message ? onDone : onBack)();
+              }}
+            >
+              {message ? "Return to sign in" : "Back to sign in"}
+            </button>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
 
 function Sidebar({ user, section, onNavigate, onLogout, onHelp, onAccount, open, onClose }: { user: User; section: Section; onNavigate: (section: Section) => void; onLogout: () => void; onHelp: () => void; onAccount: () => void; open: boolean; onClose: () => void }) {
   const items: Array<{ id: Section; label: string; icon: ReactNode; roles: User["role"][] }> = [
@@ -1568,7 +2015,88 @@ function Topbar({ user, title, onMenu, onNotifications, onNavigate, onAccount, o
     setSearchOpen(false);
     setQuery("");
   }
-  return <header className="topbar"><div className="topbar-left"><button className="icon-button menu-toggle" onClick={onMenu} aria-label="Open navigation"><Menu size={19} /></button><span className="topbar-title">{title}</span></div><div className="topbar-actions"><div ref={searchRef} className={`topbar-search-wrap ${searchOpen ? "search-active" : ""}`}><button className="icon-button mobile-search-toggle" aria-label="Search workspace" onClick={() => setSearchOpen((open) => !open)}><Search size={17} /></button><label className="search-box"><Search size={15} /><input aria-label="Search workspace pages" placeholder="Search workspace" value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setSearchOpen(false); if (event.key === "Enter" && results[0]) openDestination(results[0].section); }} /></label>{searchOpen && <div className="search-results" role="listbox" aria-label="Workspace pages">{results.length ? results.map((item) => <button key={item.section} role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => openDestination(item.section)}>{item.label}<ArrowUpRight size={14} /></button>) : <span>No matching workspace pages</span>}</div>}</div><button className="icon-button" onClick={onNotifications} aria-label="Notifications"><Bell size={18} /></button><span className="topbar-separator" /><div ref={profileRef} className="profile-menu-wrap"><button className="profile-trigger" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}><UserAvatar user={user} className="topbar-avatar" /><ChevronDown size={14} /></button>{profileOpen && <div className="profile-menu"><div className="profile-menu-identity"><strong>{user.name}</strong><small>{user.email}</small></div><button onClick={() => { onAccount(); setProfileOpen(false); }}><UserRound size={15} /> My account</button><button className="profile-logout" onClick={() => { onLogout(); setProfileOpen(false); }}><LogOut size={15} /> Log out</button></div>}</div></div></header>;
+  return (
+    <header className="topbar">
+      <div className="topbar-left">
+        <button className="icon-button menu-toggle" onClick={onMenu} aria-label="Open navigation">
+          <Menu size={19} />
+        </button>
+        <span className="topbar-title">{title}</span>
+      </div>
+      <div className="topbar-actions">
+        <div ref={searchRef} className={`topbar-search-wrap ${searchOpen ? "search-active" : ""}`}>
+          <button className="icon-button mobile-search-toggle" aria-label="Search workspace" onClick={() => setSearchOpen((open) => !open)}>
+            <Search size={17} />
+          </button>
+          <label className="search-box">
+            <Search size={15} />
+            <input
+              aria-label="Search workspace pages"
+              placeholder="Search workspace"
+              value={query}
+              onFocus={() => setSearchOpen(true)}
+              onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setSearchOpen(false);
+                if (event.key === "Enter" && results[0]) openDestination(results[0].section);
+              }}
+            />
+          </label>
+          {searchOpen && (
+            <div className="search-results" role="listbox" aria-label="Workspace pages">
+              {results.length ? results.map((item) => (
+                <button
+                  key={item.section}
+                  role="option"
+                  aria-selected="false"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => openDestination(item.section)}
+                >
+                  {item.label}
+                  <ArrowUpRight size={14} />
+                </button>
+              )) : <span>No matching workspace pages</span>}
+            </div>
+          )}
+        </div>
+        <button className="icon-button" onClick={onNotifications} aria-label="Notifications">
+          <Bell size={18} />
+        </button>
+        <span className="topbar-separator" />
+        <div ref={profileRef} className="profile-menu-wrap">
+          <button
+            className="profile-trigger profile-capsule"
+            aria-expanded={profileOpen}
+            onClick={() => setProfileOpen((open) => !open)}
+            aria-label="User profile menu"
+          >
+            <UserAvatar user={user} className="topbar-avatar profile-capsule-avatar" />
+            <div className="profile-capsule-meta">
+              <span className="profile-capsule-name">{user.name}</span>
+              <span className="profile-capsule-role">
+                {user.position || (user.role === "ceo" ? "Chief Executive Officer" : user.role === "team_lead" ? "Team Lead" : "UI/UX Designer")}
+              </span>
+            </div>
+            <ChevronDown size={14} className="profile-capsule-arrow" />
+          </button>
+          {profileOpen && (
+            <div className="profile-menu">
+              <div className="profile-menu-identity">
+                <strong>{user.name}</strong>
+                <small>{user.email}</small>
+              </div>
+              <button onClick={() => { onAccount(); setProfileOpen(false); }}>
+                <UserRound size={15} /> My account
+              </button>
+              <button className="profile-logout" onClick={() => { onLogout(); setProfileOpen(false); }}>
+                <LogOut size={15} /> Log out
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
 }
 
 function StatCard({ label, value, icon, detail, tone }: { label: string; value: string | number; icon: ReactNode; detail: string; tone: string }) {
@@ -1649,120 +2177,110 @@ function Overview({ user, notify, onNavigate }: { user: User; notify: (message: 
   }) {
     const trend = data?.attendanceTrend ?? [];
     const report = data?.attendanceReport ?? [];
-    const today = data?.today ?? new Date().toISOString().slice(0, 10);
-    const hasAttendance = report.length > 0;
-    const hasWorkHours = trend.length > 0;
+    
+    // Accurate user local date & day
+    const now = new Date();
+    const localTodayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const activeToday = data?.today || localTodayKey;
     const trendByDate = new Map(trend.map((item) => [item.date, item.averageMinutes]));
 
-    // Calendar working days excluding Sundays
+    // Calendar working days excluding Sundays, strictly ending on today
     const calendarDays = Array.from({ length: 365 }, (_, index) => {
-      const date = new Date(`${today}T00:00:00Z`);
-      date.setUTCDate(date.getUTCDate() - (364 - index));
-      const dayKey = date.toISOString().slice(0, 10);
+      const date = new Date(`${activeToday}T00:00:00`);
+      date.setDate(date.getDate() - (364 - index));
+      const dayKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       let mins = trendByDate.get(dayKey) ?? null;
-      if (dayKey === today && isWorking) {
+      if (dayKey === activeToday && (isWorking || liveElapsedMinutes > 0)) {
         mins = liveElapsedMinutes;
       }
       return { key: dayKey, date, averageMinutes: mins };
-    }).filter((row) => row.date.getUTCDay() !== 0);
+    }).filter((row) => row.date.getDay() !== 0);
+
+    const lastSixDays = calendarDays.slice(-6);
 
     const workChartRows = chartPeriod === "daily"
-      ? calendarDays.slice(-6).map((row) => {
-          const hours = row.key === today && isWorking
-            ? Math.round((liveElapsedMinutes / 60) * 10) / 10
-            : row.averageMinutes === null ? 0 : Math.round((row.averageMinutes / 60) * 10) / 10;
+      ? lastSixDays.map((row) => {
+          const isToday = row.key === activeToday;
+          const mins = isToday && (isWorking || liveElapsedMinutes > 0)
+            ? liveElapsedMinutes
+            : (row.averageMinutes ?? 0);
+          const hours = Math.round((mins / 60) * 100) / 100;
           return {
-            label: new Intl.DateTimeFormat("en", { weekday: "short", timeZone: "UTC" }).format(row.date),
+            id: row.key,
+            label: new Intl.DateTimeFormat("en", { weekday: "short" }).format(row.date),
+            fullLabel: new Intl.DateTimeFormat("en", { weekday: "long", month: "short", day: "numeric" }).format(row.date),
+            initial: new Intl.DateTimeFormat("en", { weekday: "narrow" }).format(row.date),
             hours,
+            isToday,
           };
         })
       : chartPeriod === "weekly"
         ? Array.from({ length: 6 }, (_, index) => {
-            const end = new Date(`${today}T00:00:00Z`);
-            end.setUTCDate(end.getUTCDate() - (5 - index) * 7);
+            const end = new Date(`${activeToday}T00:00:00`);
+            end.setDate(end.getDate() - (5 - index) * 7);
             const start = new Date(end);
-            start.setUTCDate(start.getUTCDate() - 6);
+            start.setDate(start.getDate() - 6);
             const rows = calendarDays.filter((row) => row.date >= start && row.date <= end && row.averageMinutes !== null);
             const average = rows.length ? rows.reduce((sum, row) => sum + (row.averageMinutes ?? 0), 0) / rows.length : 0;
+            const isCurrentWeek = index === 5;
             return {
-              label: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(start),
-              hours: Math.round((average / 60) * 10) / 10,
+              id: `week-${index}`,
+              label: new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(start),
+              fullLabel: `${new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(start)} – ${new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(end)}`,
+              initial: `${index + 1}`,
+              hours: Math.round((average / 60) * 100) / 100,
+              isToday: isCurrentWeek,
             };
           })
         : Array.from({ length: 12 }, (_, index) => {
-            const month = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
-            month.setUTCMonth(month.getUTCMonth() - (11 - index));
-            const nextMonth = new Date(month);
-            nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
-            const rows = calendarDays.filter((row) => row.date >= month && row.date < nextMonth && row.averageMinutes !== null);
+            const currentYear = now.getFullYear();
+            const monthDate = new Date(currentYear, index, 1);
+            const nextMonth = new Date(currentYear, index + 1, 1);
+            const rows = calendarDays.filter((row) => row.date >= monthDate && row.date < nextMonth && row.averageMinutes !== null);
             const average = rows.length ? rows.reduce((sum, row) => sum + (row.averageMinutes ?? 0), 0) / rows.length : 0;
+            const isCurrentMonth = index === now.getMonth();
+            const monthInitial = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"][index];
             return {
-              label: new Intl.DateTimeFormat("en", { month: "short", timeZone: "UTC" }).format(month),
-              hours: Math.round((average / 60) * 10) / 10,
+              id: `month-${index}`,
+              label: new Intl.DateTimeFormat("en", { month: "short" }).format(monthDate),
+              fullLabel: new Intl.DateTimeFormat("en", { month: "long" }).format(monthDate),
+              initial: monthInitial,
+              hours: isCurrentMonth && (isWorking || liveElapsedMinutes > 0) && average === 0
+                ? Math.round((liveElapsedMinutes / 60) * 100) / 100
+                : Math.round((average / 60) * 100) / 100,
+              isToday: isCurrentMonth,
             };
           });
 
-    const sampleHours = [6.8, 7.4, 6.2, 7.1, 8, 5.9, 7.6, 6.4, 7.8, 6.9, 7.2, 6.5];
-    const chartRows = hasWorkHours ? workChartRows : workChartRows.map((row, index) => ({
-      ...row,
-      hours: sampleHours[index % sampleHours.length],
-    }));
-
-    // Real-time calculation for Attendance Report bars
-    const visibleReport = report.slice(-6).map((item) => {
-      const isToday = item.date === today;
-      let pct = item.attendancePercent;
-      if (isToday && isWorking) {
-        pct = Math.min(100, Math.round((liveElapsedMinutes / 480) * 100));
+    const attendanceCardData = lastSixDays.map((day) => {
+      const isToday = day.key === activeToday;
+      const reportItem = report.find((r) => r.date === day.key);
+      let pct = 0;
+      if (isToday) {
+        if (isWorking || liveElapsedMinutes > 0) {
+          pct = Math.min(100, Math.round((liveElapsedMinutes / 480) * 100));
+        } else if (reportItem) {
+          pct = reportItem.attendancePercent;
+        }
+      } else if (reportItem) {
+        pct = reportItem.attendancePercent;
       }
       return {
-        ...item,
-        label: new Intl.DateTimeFormat("en", { weekday: "narrow", timeZone: "UTC" }).format(new Date(`${item.date}T00:00:00Z`)),
-        fullDate: formatDate(item.date),
+        id: day.key,
+        day: new Intl.DateTimeFormat("en", { weekday: "narrow" }).format(day.date),
+        fullDate: new Intl.DateTimeFormat("en", { weekday: "long", month: "short", day: "numeric" }).format(day.date),
         attendancePercent: pct,
-        remaining: Math.max(0, 100 - pct),
-        sample: false,
         isToday,
       };
     });
-
-    const attendanceSamples = [78, 92, 45, 70, 51, 88];
-    const attendanceRows = hasAttendance ? visibleReport : calendarDays.slice(-6).map((day, index) => {
-      const isToday = day.key === today;
-      let pct = isToday && isWorking
-        ? Math.min(100, Math.round((liveElapsedMinutes / 480) * 100))
-        : attendanceSamples[index];
-      return {
-        date: day.key,
-        label: new Intl.DateTimeFormat("en", { weekday: "narrow", timeZone: "UTC" }).format(day.date),
-        fullDate: formatDate(day.key),
-        present: 0,
-        expected: 0,
-        approvedLeave: 0,
-        reviewRequired: 0,
-        attendancePercent: pct,
-        remaining: 100 - pct,
-        sample: true,
-        isToday,
-      };
-    });
-
-    const attendanceCardData = attendanceRows.map((row) => ({
-      id: row.date || row.label,
-      day: row.label,
-      fullDate: row.fullDate,
-      attendancePercent: row.attendancePercent,
-      sample: row.sample,
-      isToday: row.isToday,
-    }));
 
     return (
       <div className="overview-grid overview-charts-grid">
         <WorkHoursLollipopChart
           period={chartPeriod}
           onPeriodChange={onPeriodChange}
-          liveData={hasWorkHours}
-          data={hasWorkHours ? chartRows : undefined}
+          liveData={isWorking || liveElapsedMinutes > 0}
+          data={workChartRows}
         />
 
         <AttendanceReportCard data={attendanceCardData} />
@@ -1843,18 +2361,39 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+    api<Application[]>(`/api/applications?status=${filter}`)
+      .then((data) => {
+        if (!cancelled) {
+          setRows(data);
+          setLoading(false);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          notify(error instanceof Error ? error.message : "Could not load applications.", "error");
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filter, notify]);
+
+  const reload = useCallback(async () => {
     try {
-      setRows(await api<Application[]>(`/api/applications?status=${filter}`));
+      const data = await api<Application[]>(`/api/applications?status=${filter}`);
+      setRows(data);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Could not load applications.", "error");
-    } finally {
-      setLoading(false);
     }
   }, [filter, notify]);
 
-  useEffect(() => { void load(); }, [load]);
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => (row.status || "").toLowerCase() === filter.toLowerCase());
+  }, [rows, filter]);
 
   async function decide(decision: "approve" | "reject") {
     if (!selected) return;
@@ -1878,7 +2417,7 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
         notify(result.emailQueued ? "Application rejected. Notification email queued." : "Application rejected. SMTP is unavailable, so no notification email was sent.");
       }
       setReason("");
-      await load();
+      await reload();
     } catch (error) {
       notify(error instanceof Error ? error.message : "Unable to update application.", "error");
     } finally {
@@ -1911,12 +2450,20 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
       <PageHeader
         title="Employee Applications & KYC"
         subtitle="Review onboarding submissions, verify KYC & educational records, and approve employee credentials."
-        action={<span className="count-chip">{rows.length} {filter}</span>}
+        action={<span className="count-chip">{filteredRows.length} {filter}</span>}
       />
       <div className="filter-bar">
         <div className="segmented">
           {["pending", "approved", "rejected"].map((status) => (
-            <button className={filter === status ? "segment-active" : ""} onClick={() => setFilter(status)} key={status}>
+            <button
+              className={filter === status ? "segment-active" : ""}
+              onClick={() => {
+                setFilter(status);
+                setSelected(null);
+                setInspectingDoc(null);
+              }}
+              key={status}
+            >
               {status[0].toUpperCase() + status.slice(1)}
             </button>
           ))}
@@ -1929,7 +2476,7 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
       <section className="panel table-panel">
         {loading ? (
           <LoadingState />
-        ) : rows.length ? (
+        ) : filteredRows.length ? (
           <div className="table-scroll">
             <table>
               <thead>
@@ -1946,7 +2493,7 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {filteredRows.map((row) => (
                   <tr key={row.id}>
                     <td>
                       <button className="table-person" onClick={() => setSelected(row)}>
@@ -2006,7 +2553,21 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
 
             {selected.photoUrl && (
               <div className="modal-photo-preview">
-                <img src={selected.photoUrl} alt={selected.name} className="modal-applicant-img" />
+                <div className="modal-photo-card">
+                  <img src={selected.photoUrl} alt={selected.name} className="modal-applicant-img" />
+                  <button
+                    type="button"
+                    className="modal-photo-zoom-btn"
+                    title="Click to view full photograph"
+                    onClick={() => setInspectingDoc({ title: `${selected.name} - Official Photograph`, url: selected.photoUrl! })}
+                  >
+                    <ZoomIn size={13} /> View full photo
+                  </button>
+                </div>
+                <div className="modal-photo-meta">
+                  <span className="modal-photo-badge">Official Applicant Photograph</span>
+                  <p className="modal-photo-desc">Passport-style headshot submitted during onboarding for official identification and team profile.</p>
+                </div>
               </div>
             )}
 
@@ -2997,8 +3558,8 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
           </div>
         </section>
         <section className="panel settings-panel">
-          <div className="panel-heading"><div><h2>Employee ID format</h2><p>Assigned once, after approval, using the approval year and a shared sequence.</p></div><Fingerprint size={18} /></div>
-          <div className="format-preview"><small>Generated format</small><strong>MM-YYYY-0001</strong><small>Example: MM-2026-0001</small></div>
+          <div className="panel-heading"><div><h2>Employee ID format</h2><p>Assigned once, after CEO approval, using the approval year and unguessable non-zero digits.</p></div><Fingerprint size={18} /></div>
+          <div className="format-preview"><small>Generated format</small><strong>MM-YYYY-NNNN</strong><small>Example: MM-2026-7492 (No zeros, unguessable)</small></div>
         </section>
         <section className="panel settings-panel">
           <div className="panel-heading"><div><h2>Email delivery</h2><p>Secrets stay in the server environment and are never exposed to the browser.</p></div><Bell size={18} /></div>
@@ -3057,13 +3618,212 @@ function LoadingState() {
   return <div className="loading-state" aria-label="Loading"><span /><span /><span /></div>;
 }
 
+function ApplicationSubmittedScreen({
+  submission,
+  onProceedToLogin,
+}: {
+  submission: { reference: string; email: string; fullName: string; position: string; emailQueued: boolean };
+  onProceedToLogin: (employeeId?: string) => void;
+}) {
+  const [status, setStatus] = useState<"pending" | "approved" | "rejected">("pending");
+  const [approvedEmployeeId, setApprovedEmployeeId] = useState("");
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchStatus = async () => {
+      try {
+        const res = await api<{
+          status: "pending" | "approved" | "rejected";
+          employeeId: string | null;
+          rejectionReason: string | null;
+        }>(`/api/applications/status?reference=${encodeURIComponent(submission.reference)}`);
+        if (!active) return;
+        if (res.status === "approved" && res.employeeId) {
+          setStatus("approved");
+          setApprovedEmployeeId(res.employeeId);
+        } else if (res.status === "rejected") {
+          setStatus("rejected");
+          setRejectionReason(res.rejectionReason || "Application could not be approved at this time.");
+        }
+      } catch {
+        // network or polling errors are silently ignored
+      }
+    };
+
+    void fetchStatus();
+    const interval = setInterval(() => {
+      if (status === "pending") {
+        void fetchStatus();
+      }
+    }, 3500);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [submission.reference, status]);
+
+  async function manualCheck() {
+    setChecking(true);
+    try {
+      const res = await api<{
+        status: "pending" | "approved" | "rejected";
+        employeeId: string | null;
+        rejectionReason: string | null;
+      }>(`/api/applications/status?reference=${encodeURIComponent(submission.reference)}`);
+      if (res.status === "approved" && res.employeeId) {
+        setStatus("approved");
+        setApprovedEmployeeId(res.employeeId);
+      } else if (res.status === "rejected") {
+        setStatus("rejected");
+        setRejectionReason(res.rejectionReason || "Application could not be approved at this time.");
+      }
+    } catch {
+      // ignore
+    } finally {
+      setTimeout(() => setChecking(false), 500);
+    }
+  }
+
+  async function copyId() {
+    if (!approvedEmployeeId) return;
+    try {
+      await navigator.clipboard.writeText(approvedEmployeeId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // fallback
+    }
+  }
+
+  if (status === "approved") {
+    return (
+      <main className="success-shell">
+        <section className="success-card">
+          <span className="success-icon success-icon-approved">
+            <Check size={28} />
+          </span>
+          <p className="eyebrow" style={{ color: "#059669" }}>ACCOUNT APPROVED BY CEO</p>
+          <h1>Welcome to MetaMinds!</h1>
+          <p style={{ fontSize: "13px", color: "#475569", lineHeight: 1.6, margin: "10px 0 16px" }}>
+            Your employee account has been reviewed and approved by the CEO! Your official Employee ID is displayed below and has also been sent directly to your registered email address (<strong>{submission.email}</strong>).
+          </p>
+
+          <div className="reference-box" style={{ background: "#f0fdf4", borderColor: "#86efac" }}>
+            <small style={{ color: "#166534" }}>YOUR OFFICIAL EMPLOYEE ID</small>
+            <strong style={{ color: "#15803d", fontSize: "22px", letterSpacing: "1.5px" }}>{approvedEmployeeId}</strong>
+            <Button variant="secondary" onClick={() => void copyId()}>
+              <Copy size={15} /> {copied ? "Copied to clipboard!" : "Copy Employee ID"}
+            </Button>
+          </div>
+
+          <div className="submission-email-note" style={{ background: "#ecfdf5", borderColor: "#a7f3d0", color: "#065f46" }}>
+            <Mail size={18} />
+            <span>Your Employee ID has also been delivered to <strong>{submission.email}</strong>. Use this ID or your email along with your password to sign in.</span>
+          </div>
+
+          <Button
+            variant="primary"
+            style={{ width: "100%", marginTop: "18px", padding: "12px", fontSize: "14px", fontWeight: 700 }}
+            onClick={() => onProceedToLogin(approvedEmployeeId)}
+          >
+            Proceed to Sign In
+          </Button>
+        </section>
+      </main>
+    );
+  }
+
+  if (status === "rejected") {
+    return (
+      <main className="success-shell">
+        <section className="success-card">
+          <span className="success-icon" style={{ background: "#fef2f2", color: "#dc2626" }}>
+            <X size={28} />
+          </span>
+          <p className="eyebrow" style={{ color: "#dc2626" }}>ACCOUNT REGISTRATION UPDATE</p>
+          <h1>Registration Not Approved</h1>
+          <p style={{ fontSize: "13px", color: "#475569", lineHeight: 1.6, margin: "10px 0 16px" }}>
+            {rejectionReason || "Your application was reviewed and could not be approved at this time."}
+          </p>
+          <Button variant="secondary" style={{ width: "100%", marginTop: "16px" }} onClick={() => onProceedToLogin()}>
+            Return to Sign In
+          </Button>
+        </section>
+      </main>
+    );
+  }
+
+  // Pending approval state
+  return (
+    <main className="success-shell">
+      <section className="success-card">
+        <span className="success-icon">
+          <Check size={28} />
+        </span>
+        <p className="eyebrow">APPLICATION SUBMITTED · PENDING CEO APPROVAL</p>
+        <h1>Employee Account Created Successfully!</h1>
+        <p style={{ fontSize: "13px", color: "#475569", lineHeight: 1.6, margin: "10px 0 14px" }}>
+          Your employee account for <strong>{submission.position || "your position"}</strong> has been created and submitted for executive review.
+        </p>
+
+        <div className="status-live-pill">
+          <span className="pulse-dot" />
+          <span>Awaiting CEO Approval</span>
+        </div>
+
+        <div className="status-info-box">
+          <div className="status-info-row">
+            <span>Position / Role</span>
+            <strong>{submission.position}</strong>
+          </div>
+          <div className="status-info-row">
+            <span>Registered Email</span>
+            <strong>{submission.email}</strong>
+          </div>
+          <div className="status-info-row">
+            <span>Official Employee ID</span>
+            <em style={{ color: "#2563eb", fontWeight: 600, fontStyle: "normal" }}>The employee id will be sent to the email directly</em>
+          </div>
+        </div>
+
+        <div className="submission-email-note">
+          <Mail size={18} />
+          <span>The employee id will be sent to the email directly once your account is approved by the CEO.</span>
+        </div>
+
+        <p className="success-note" style={{ margin: "14px 0 18px", color: "#64748b", fontSize: "12px", lineHeight: 1.5 }}>
+          You do not need to refresh. As soon as the CEO approves your account, your Employee ID will be sent to your email and will appear right here automatically.
+        </p>
+
+        <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+          <Button variant="secondary" onClick={() => void manualCheck()} disabled={checking}>
+            {checking ? "Checking…" : "Check Approval Status"}
+          </Button>
+          <Button variant="secondary" onClick={() => onProceedToLogin()}>
+            Return to Sign In
+          </Button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [section, setSection] = useState<Section>("overview");
   const [publicPage, setPublicPage] = useState<"login" | "register">("login");
-  const [applicationReference, setApplicationReference] = useState("");
-  const [applicationEmailQueued, setApplicationEmailQueued] = useState(false);
-  const [referenceCopyMessage, setReferenceCopyMessage] = useState("");
+  const [submission, setSubmission] = useState<{
+    reference: string;
+    email: string;
+    fullName: string;
+    position: string;
+    emailQueued: boolean;
+  } | null>(null);
+  const [prefilledIdentifier, setPrefilledIdentifier] = useState("");
   const [activationComplete, setActivationComplete] = useState(false);
   const [resetMode, setResetMode] = useState(false);
   const [resetComplete, setResetComplete] = useState(false);
@@ -3081,19 +3841,6 @@ export default function App() {
     setToast({ text: message, kind });
     window.setTimeout(() => setToast(null), 4200);
   }, []);
-  useEffect(() => {
-    if (!referenceCopyMessage) return;
-    const timer = window.setTimeout(() => setReferenceCopyMessage(""), 2800);
-    return () => window.clearTimeout(timer);
-  }, [referenceCopyMessage]);
-  async function copyApplicationReference() {
-    try {
-      await navigator.clipboard.writeText(applicationReference);
-      setReferenceCopyMessage("Reference copied to clipboard.");
-    } catch {
-      setReferenceCopyMessage("Copy was blocked. Select the reference number and copy it.");
-    }
-  }
   useEffect(() => {
     api<{ user: User | null; csrfToken: string }>("/api/auth/me").then((result) => {
       setUser(result.user);
@@ -3138,7 +3885,22 @@ export default function App() {
   if (loading) return <div className="launch-loading"><BrandMark /><LoadingState /></div>;
   if (activationToken && !activationComplete) return <Activate token={activationToken} onDone={() => setActivationComplete(true)} />;
   if (resetToken && !resetComplete) return <PasswordReset token={resetToken} onDone={() => { setResetComplete(true); void api<{ user: User | null }>("/api/auth/me").then((result) => setUser(result.user)); }} onBack={() => { setResetComplete(true); void api<{ user: User | null }>("/api/auth/me").then((result) => setUser(result.user)); }} />;
-  if (applicationReference) return <main className="success-shell"><section className="success-card"><span className="success-icon"><Check size={27} /></span><p className="eyebrow">APPLICATION SUBMITTED</p><h1>Your details are with our team.</h1><p>Your application is pending review by the MetaMinds recruitment team. This confirmation is not an employment offer or a request to submit identity documents. We will email you after a decision is made.</p><div className="reference-box"><small>YOUR APPLICATION REFERENCE</small><strong>{applicationReference}</strong><Button variant="secondary" onClick={() => void copyApplicationReference()}><Copy size={15} /> Copy reference</Button>{referenceCopyMessage && <span className={`copy-feedback ${referenceCopyMessage.startsWith("Copy was") ? "copy-feedback-error" : ""}`} role="status">{referenceCopyMessage}</span>}</div><div className="submission-email-note"><Mail size={18} /><span>{applicationEmailQueued ? "A confirmation email with your application details has been queued to your verified email address. Please check your inbox and spam folder." : "We could not queue a confirmation email. Please keep your reference number and contact MetaMinds Pvt. Ltd. through its official channels."}</span></div><p className="success-note">Keep your reference number for future enquiries. Your account remains inactive until your application is approved.</p><Button variant="secondary" onClick={() => { setApplicationReference(""); setReferenceCopyMessage(""); setPublicPage("login"); }}>Return to sign in</Button></section></main>;
-  if (!user) return publicPage === "register" ? <Register onBack={() => setPublicPage("login")} onSubmitted={(reference, emailQueued) => { setApplicationReference(reference); setApplicationEmailQueued(emailQueued); }} /> : resetMode ? <PasswordReset onDone={() => setResetMode(false)} onBack={() => setResetMode(false)} /> : <><Login onLogin={login} onDemoLogin={demoLogin} onRegister={() => setPublicPage("register")} onForgot={() => setResetMode(true)} />{error && <div className="toast toast-error" role="alert">{error}</div>}</>;
+  if (submission) {
+    return (
+      <ApplicationSubmittedScreen
+        submission={submission}
+        onProceedToLogin={(approvedId) => {
+          if (approvedId) {
+            setPrefilledIdentifier(approvedId);
+          } else if (submission.email) {
+            setPrefilledIdentifier(submission.email);
+          }
+          setSubmission(null);
+          setPublicPage("login");
+        }}
+      />
+    );
+  }
+  if (!user) return publicPage === "register" ? <Register onBack={() => setPublicPage("login")} onSubmitted={(sub) => setSubmission(sub)} /> : resetMode ? <PasswordReset onDone={() => setResetMode(false)} onBack={() => setResetMode(false)} /> : <><Login onLogin={login} onDemoLogin={demoLogin} onRegister={() => setPublicPage("register")} onForgot={() => setResetMode(true)} initialIdentifier={prefilledIdentifier} />{error && <div className="toast toast-error" role="alert">{error}</div>}</>;
   return <div className="app-shell"><Sidebar user={user} section={section} onNavigate={setSection} onLogout={() => void logout()} onHelp={() => setHelpOpen(true)} onAccount={() => setAccountOpen(true)} open={menuOpen} onClose={() => setMenuOpen(false)} /><main className="main-area"><Topbar user={user} title={sectionTitles[section]} onMenu={() => setMenuOpen(true)} onNotifications={() => setNotificationsOpen(true)} onNavigate={setSection} onAccount={() => setAccountOpen(true)} onLogout={() => void logout()} />{section === "overview" && <Overview user={user} notify={notify} onNavigate={setSection} />}{section === "applications" && user.role === "ceo" && <ApplicationsPage notify={notify} />}{section === "employees" && <DirectoryPage user={user} notify={notify} />}{section === "attendance" && <AttendancePage user={user} notify={notify} />}{section === "leave" && <LeavePage user={user} notify={notify} />}{section === "payroll" && user.role === "ceo" && <PayrollPage notify={notify} />}{section === "settings" && user.role === "ceo" && <SettingsPage notify={notify} />}{section === "audit" && user.role === "ceo" && <AuditPage notify={notify} />}</main>{notificationsOpen && <NotificationsPanel onClose={() => setNotificationsOpen(false)} notify={notify} />}{messagesOpen && <EmailStatusPanel onClose={() => setMessagesOpen(false)} notify={notify} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{accountOpen && <AccountPanel user={user} onClose={() => setAccountOpen(false)} />}{toast && <div className={`toast ${toast.kind === "error" ? "toast-error" : ""}`} role="status">{toast.kind === "error" ? <X size={17} /> : <Check size={17} />}{toast.text}</div>}</div>;
 }
