@@ -6,9 +6,42 @@
     <meta name="theme-color" content="#f5f6f8" />
     <meta name="description" content="MetaMinds Pvt. Ltd. employee people portal" />
     <title>MetaMinds Pvt. Ltd. | People portal</title>
+    <script>
+      // Automatically redirect if opened through VS Code's "Live Server" (port 5500)
+      if (window.location.port === "5500") {
+        window.location.replace("http://localhost:5173" + window.location.pathname + window.location.search + window.location.hash);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Fallback UI if opened on port 5500 and redirect was interrupted
+      if (window.location.port === "5500") {
+        setTimeout(function() {
+          var root = document.getElementById("root");
+          if (root && (!root.children || root.children.length === 0)) {
+            root.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc;padding:24px;box-sizing:border-box;">' +
+              '<div style="max-width:520px;width:100%;background:#ffffff;border-radius:20px;padding:36px;box-shadow:0 15px 35px rgba(2,132,199,0.12);border:1px solid #e2e8f0;text-align:center;">' +
+                '<div style="width:58px;height:58px;border-radius:14px;background:#e0f2fe;display:inline-flex;align-items:center;justify-content:center;margin-bottom:18px;font-size:26px;">⚡</div>' +
+                '<h2 style="margin:0 0 10px;color:#0f172a;font-size:22px;font-weight:800;">Open via Vite Dev Server</h2>' +
+                '<p style="margin:0 0 20px;color:#64748b;font-size:14px;line-height:1.55;">' +
+                  'You are viewing <strong>port 5500</strong> (VS Code "Go Live" static server). Because MetaMinds is a React &amp; TypeScript application, it runs on port <strong>5173</strong> via Vite.' +
+                '</p>' +
+                '<a href="http://localhost:5173" style="display:block;width:100%;padding:13px 20px;background:linear-gradient(135deg,#0284c7 0%,#1d4ed8 100%);color:#ffffff;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none;box-sizing:border-box;box-shadow:0 4px 18px rgba(2,132,199,0.35);">' +
+                  'Open http://localhost:5173 ↗' +
+                '</a>' +
+                '<div style="margin-top:20px;padding:14px;background:#f1f5f9;border-radius:10px;text-align:left;font-size:12.5px;color:#334155;line-height:1.6;">' +
+                  '<strong>Correct steps:</strong><br/>' +
+                  '1. In terminal, run: <code style="background:#e2e8f0;padding:2px 6px;border-radius:4px;color:#0f172a;font-weight:700;">npm run dev</code><br/>' +
+                  '2. Open: <a href="http://localhost:5173" style="color:#0284c7;font-weight:700;text-decoration:none;">http://localhost:5173</a>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+          }
+        }, 200);
+      }
+    </script>
   </body>
 </html>

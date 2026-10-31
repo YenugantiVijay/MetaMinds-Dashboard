@@ -1,0 +1,17 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "label": "npm: dev (Start MetaMinds Portal)",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "detail": "Runs backend on http://localhost:3001 and Vite client on http://localhost:5173"
+    }
+  ]
+}

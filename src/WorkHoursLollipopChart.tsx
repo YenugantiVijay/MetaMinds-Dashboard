@@ -8,6 +8,7 @@ export type WorkHoursItem = {
   fullLabel: string;
   initial: string;
   hours: number;
+  isToday?: boolean;
 };
 
 const DEFAULT_MONTHLY_DATA: WorkHoursItem[] = [
@@ -20,7 +21,7 @@ const DEFAULT_MONTHLY_DATA: WorkHoursItem[] = [
   { id: "jul", label: "Jul", fullLabel: "July", initial: "J", hours: 6.8 },
   { id: "aug", label: "Aug", fullLabel: "August", initial: "A", hours: 2.8 },
   { id: "sep", label: "Sep", fullLabel: "September", initial: "S", hours: 3.2 },
-  { id: "oct", label: "Oct", fullLabel: "October", initial: "O", hours: 4.32 },
+  { id: "oct", label: "Oct", fullLabel: "October", initial: "O", hours: 4.32, isToday: new Date().getMonth() === 9 },
   { id: "nov", label: "Nov", fullLabel: "November", initial: "N", hours: 5.0 },
   { id: "dec", label: "Dec", fullLabel: "December", initial: "D", hours: 0 },
 ];
@@ -31,30 +32,28 @@ const DEFAULT_WEEKLY_DATA: WorkHoursItem[] = [
   { id: "w3", label: "W3", fullLabel: "Week 3", initial: "3", hours: 6.8 },
   { id: "w4", label: "W4", fullLabel: "Week 4", initial: "4", hours: 7.9 },
   { id: "w5", label: "W5", fullLabel: "Week 5", initial: "5", hours: 7.4 },
-  { id: "w6", label: "W6", fullLabel: "Week 6", initial: "6", hours: 8.0 },
+  { id: "w6", label: "W6", fullLabel: "Week 6", initial: "6", hours: 8.0, isToday: true },
 ];
 
 const DEFAULT_DAILY_DATA: WorkHoursItem[] = [
-  { id: "mon", label: "Mon", fullLabel: "Monday", initial: "M", hours: 7.5 },
-  { id: "tue", label: "Tue", fullLabel: "Tuesday", initial: "T", hours: 8.0 },
-  { id: "wed", label: "Wed", fullLabel: "Wednesday", initial: "W", hours: 7.2 },
-  { id: "thu", label: "Thu", fullLabel: "Thursday", initial: "T", hours: 8.1 },
-  { id: "fri", label: "Fri", fullLabel: "Friday", initial: "F", hours: 6.8 },
+  { id: "tue", label: "Tue", fullLabel: "Tuesday", initial: "T", hours: 7.5 },
+  { id: "wed", label: "Wed", fullLabel: "Wednesday", initial: "W", hours: 8.0 },
+  { id: "thu", label: "Thu", fullLabel: "Thursday", initial: "T", hours: 7.2 },
+  { id: "fri", label: "Fri", fullLabel: "Friday", initial: "F", hours: 8.1 },
   { id: "sat", label: "Sat", fullLabel: "Saturday", initial: "S", hours: 4.5 },
+  { id: "mon", label: "Mon", fullLabel: "Monday", initial: "M", hours: 0, isToday: true },
 ];
 
 function formatTooltipTime(hours: number): string {
-  if (Math.abs(hours - 4.32) < 0.01) return "4.32.15h";
-  const h = Math.floor(hours);
-  const m = Math.floor((hours - h) * 60);
-  const s = Math.floor(((hours - h) * 60 - m) * 60);
-  if (s > 0) {
+  if (hours <= 0) return "0.00h";
+  const totalSeconds = Math.round(hours * 3600);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) {
     return `${h}.${m.toString().padStart(2, "0")}.${s.toString().padStart(2, "0")}h`;
   }
-  if (m > 0) {
-    return `${h}.${m.toString().padStart(2, "0")}h`;
-  }
-  return `${hours.toFixed(2)}h`;
+  return `0.${m.toString().padStart(2, "0")}.${s.toString().padStart(2, "0")}h`;
 }
 
 export type WorkHoursLollipopChartProps = {
@@ -63,7 +62,7 @@ export type WorkHoursLollipopChartProps = {
   liveData?: boolean;
   period?: PeriodType;
   onPeriodChange?: (period: PeriodType) => void;
-  data?: Array<{ label: string; hours: number; initial?: string; fullLabel?: string; id?: string }>;
+  data?: Array<{ label: string; hours: number; initial?: string; fullLabel?: string; id?: string; isToday?: boolean }>;
   monthlyData?: WorkHoursItem[];
   weeklyData?: WorkHoursItem[];
   dailyData?: WorkHoursItem[];
@@ -92,6 +91,7 @@ export function WorkHoursLollipopChart({
         fullLabel: d.fullLabel ?? d.label,
         initial: d.initial ?? (d.label.trim().charAt(0).toUpperCase() || `${index + 1}`),
         hours: typeof d.hours === "number" && !isNaN(d.hours) ? d.hours : 0,
+        isToday: d.isToday,
       }));
     }
     switch (currentPeriod) {
@@ -105,22 +105,26 @@ export function WorkHoursLollipopChart({
     }
   }, [data, currentPeriod, dailyData, weeklyData, monthlyData]);
 
-  // Default selection matches April in Image 2, or first available month
-  const [selectedId, setSelectedId] = useState<string>(() => {
-    const apr = dataset.find((d) => d.id === "apr");
-    if (apr) return apr.id;
-    return dataset[Math.min(3, dataset.length - 1)]?.id ?? dataset[0]?.id ?? "";
-  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Keep selection valid when dataset changes
+  // Automatically select the active item: prefer isToday, then current month, then latest day
   const activeSelectedId = useMemo(() => {
-    if (dataset.some((d) => d.id === selectedId)) {
+    if (selectedId && dataset.some((d) => d.id === selectedId)) {
       return selectedId;
     }
-    const apr = dataset.find((d) => d.id === "apr");
-    if (apr) return apr.id;
-    return dataset[Math.min(dataset.length - 1, 3)]?.id ?? dataset[0]?.id ?? "";
-  }, [dataset, selectedId]);
+    const todayItem = dataset.find((d) => d.isToday);
+    if (todayItem) return todayItem.id;
+
+    if (currentPeriod === "monthly") {
+      const monthIdx = new Date().getMonth();
+      const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+      const currentMonthId = monthNames[monthIdx];
+      const matchMonth = dataset.find((d) => d.id === currentMonthId || d.label.toLowerCase().startsWith(currentMonthId));
+      if (matchMonth) return matchMonth.id;
+    }
+
+    return dataset[dataset.length - 1]?.id ?? dataset[0]?.id ?? "";
+  }, [dataset, selectedId, currentPeriod]);
 
   const activeIndex = useMemo(() => {
     const idx = dataset.findIndex((d) => d.id === activeSelectedId);
@@ -410,7 +414,7 @@ export function WorkHoursLollipopChart({
                 const beamHeight = beamBottom - beamTop;
                 const beamX = selectedPoint.cx - beamWidth / 2;
 
-                const tooltipText = selectedPoint.id === "apr" ? "4.32.15h" : formatTooltipTime(selectedPoint.hours);
+                const tooltipText = formatTooltipTime(selectedPoint.hours);
 
                 return (
                   <>
