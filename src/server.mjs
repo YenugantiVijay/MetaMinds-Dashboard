@@ -755,13 +755,10 @@ function createApplication(body, context) {
   if (body.privacyAcknowledged !== true) fail(400, "Please acknowledge the privacy notice to submit.");
 
   const photoUrl = typeof body.photoUrl === "string" && body.photoUrl.trim() ? body.photoUrl.trim() : null;
-  const education10thDoc = typeof body.education10thDoc === "string" && body.education10thDoc.trim() ? body.education10thDoc.trim() : null;
-  const educationInterDoc = typeof body.educationInterDoc === "string" && body.educationInterDoc.trim() ? body.educationInterDoc.trim() : null;
-  const educationHigherDoc = typeof body.educationHigherDoc === "string" && body.educationHigherDoc.trim() ? body.educationHigherDoc.trim() : null;
-  const panFront = typeof body.panFront === "string" && body.panFront.trim() ? body.panFront.trim() : null;
-  const panBack = typeof body.panBack === "string" && body.panBack.trim() ? body.panBack.trim() : null;
-  const aadharFront = typeof body.aadharFront === "string" && body.aadharFront.trim() ? body.aadharFront.trim() : null;
-  const aadharBack = typeof body.aadharBack === "string" && body.aadharBack.trim() ? body.aadharBack.trim() : null;
+  const documentFields = ["education10thDoc", "educationInterDoc", "educationHigherDoc", "panFront", "panBack", "aadharFront", "aadharBack"];
+  if (documentFields.some((field) => body[field] !== undefined && body[field] !== null && body[field] !== "")) {
+    fail(400, "Identity and education documents are not accepted through the public application. Use an approved secure document process if requested later.");
+  }
 
   return withTransaction(() => {
     const alreadyApplied = db.prepare(`
@@ -776,11 +773,9 @@ function createApplication(body, context) {
       INSERT INTO employee_applications(
         reference, full_name, first_name, last_name, email, mobile, phone, employment_type,
         position, department, proposed_joining_date, education, discussed_salary,
-        education_10th_doc, education_inter_doc, education_higher_doc,
-        pan_front, pan_back, aadhar_front, aadhar_back,
         privacy_acknowledged_at, password_hash, email_verified_at, phone_verified_at, photo_url
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       reference,
       fullName,
@@ -795,13 +790,6 @@ function createApplication(body, context) {
       proposedJoiningDate,
       education,
       discussedSalary,
-      education10thDoc,
-      educationInterDoc,
-      educationHigherDoc,
-      panFront,
-      panBack,
-      aadharFront,
-      aadharBack,
       timestamp(),
       passwordHash,
       verification.email_verified_at,
@@ -1227,11 +1215,8 @@ async function route(req, res, context, body, url) {
       a.id, a.reference, a.full_name AS name, a.first_name AS firstName, a.last_name AS lastName,
       a.email, a.phone, a.employment_type AS employmentType, a.position, a.department,
       a.proposed_joining_date AS proposedJoiningDate, a.discussed_salary AS discussedSalary,
-      a.education, a.education_10th_doc AS education10thDoc, a.education_inter_doc AS educationInterDoc,
-      a.education_higher_doc AS educationHigherDoc, a.pan_front AS panFront, a.pan_back AS panBack,
-      a.aadhar_front AS aadharFront, a.aadhar_back AS aadharBack, a.status,
-      a.rejection_reason AS rejectionReason, a.photo_url AS photoUrl, a.created_at AS createdAt,
-      e.employee_id AS employeeId
+      a.education, a.status, a.rejection_reason AS rejectionReason,
+      a.photo_url AS photoUrl, a.created_at AS createdAt, e.employee_id AS employeeId
     `;
     const rawStatus = url.searchParams.get("status");
     const statusParam = rawStatus ? rawStatus.toLowerCase().trim() : "pending";
