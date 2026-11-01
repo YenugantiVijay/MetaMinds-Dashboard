@@ -2346,14 +2346,7 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
               <div className="modal-photo-preview">
                 <div className="modal-photo-card">
                   <img src={selected.photoUrl} alt={selected.name} className="modal-applicant-img" />
-                  <button
-                    type="button"
-                    className="modal-photo-zoom-btn"
-                    title="Click to view full photograph"
-                    onClick={() => setInspectingDoc({ title: `${selected.name} - Official Photograph`, url: selected.photoUrl! })}
-                  >
-                    <ZoomIn size={13} /> View full photo
-                  </button>
+
                 </div>
                 <div className="modal-photo-meta">
                   <span className="modal-photo-badge">Official Applicant Photograph</span>
