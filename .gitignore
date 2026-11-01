@@ -6,3 +6,10 @@ data/
 *.sqlite-shm
 *.sqlite-wal
 npm-debug.log*
+
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+*.log
