@@ -2932,10 +2932,11 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
     try {
       await api("/api/settings", { method: "POST", body: JSON.stringify({
         timezone: settings.timezone,
-        scheduled_start: settings.scheduled_start,
-        scheduled_end: settings.scheduled_end,
-        expected_working_minutes: settings.expected_working_minutes,
+        scheduled_start: settings.scheduled_start || "10:00",
+        scheduled_end: settings.scheduled_end || "18:00",
+        expected_working_minutes: attendancePolicyConfirmed ? settings.expected_working_minutes : "",
         absence_warning_hours: settings.absence_warning_hours,
+        attendance_policy_confirmed: attendancePolicyConfirmed ? "true" : "false",
       }) });
       notify("Company settings saved.");
       await load();
@@ -2967,18 +2968,32 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
     finally { setHolidayBusy(false); }
   }
   if (loading) return <LoadingState />;
+  const attendancePolicyConfirmed = settings.attendance_policy_confirmed === "true";
   return (
     <div className="page-content">
       <PageHeader title="Company settings" subtitle="Configure approved attendance policies and review service readiness." />
       <form className="settings-layout" onSubmit={save}>
         <section className="panel settings-panel">
           <div className="panel-heading"><div><h2>Attendance policy</h2><p>Attendance uses server timestamps and the configured company timezone.</p></div><Clock3 size={18} /></div>
+          {!attendancePolicyConfirmed && <div className="notice notice-warning"><ShieldCheck size={17} /><span>Schedule policy is not confirmed. Automatic absence reminders and attendance completion percentages are disabled until an authorized CEO confirms the real working hours.</span></div>}
+          {attendancePolicyConfirmed && <div className="notice notice-info"><ShieldCheck size={17} /><span>Attendance policy confirmed. Automated reminders will use the schedule below and the company holiday calendar.</span></div>}
           <div className="settings-grid">
             <label>Company timezone<input required value={settings.timezone || ""} onChange={(event) => change("timezone", event.target.value)} placeholder="Asia/Kolkata" /><small>Use an IANA timezone name.</small></label>
-            <label>Scheduled start<input required type="time" value={settings.scheduled_start || ""} onChange={(event) => change("scheduled_start", event.target.value)} /></label>
-            <label>Scheduled end<input required type="time" value={settings.scheduled_end || ""} onChange={(event) => change("scheduled_end", event.target.value)} /></label>
-            <label>Expected workday hours<input type="number" min="0" max="24" step="0.25" value={settings.expected_working_minutes ? Number(settings.expected_working_minutes) / 60 : ""} onChange={(event) => change("expected_working_minutes", event.target.value ? String(Math.round(Number(event.target.value) * 60)) : "")} placeholder="8 hours" /><small>Current confirmed schedule: 10 AM–6 PM, Monday–Saturday.</small></label>
+            <label>Scheduled start<input required={attendancePolicyConfirmed} type="time" value={attendancePolicyConfirmed ? settings.scheduled_start || "" : ""} onChange={(event) => change("scheduled_start", event.target.value)} /></label>
+            <label>Scheduled end<input required={attendancePolicyConfirmed} type="time" value={attendancePolicyConfirmed ? settings.scheduled_end || "" : ""} onChange={(event) => change("scheduled_end", event.target.value)} /></label>
+            <label>Expected workday hours<input required={attendancePolicyConfirmed} type="number" min="0.25" max="24" step="0.25" value={attendancePolicyConfirmed && settings.expected_working_minutes ? Number(settings.expected_working_minutes) / 60 : ""} onChange={(event) => change("expected_working_minutes", event.target.value ? String(Math.round(Number(event.target.value) * 60)) : "")} placeholder="Set approved hours" /><small>Enter the actual company-approved duration; it is not assumed by the system.</small></label>
             <label>Manager review threshold<input required type="number" min="1" max="24" value={settings.absence_warning_hours || "3"} onChange={(event) => change("absence_warning_hours", event.target.value)} /><small>Employees receive hourly reminders from shift start; unresolved cases are flagged after this many hours. No automatic salary deduction.</small></label>
+            <label className="full-width consent-row">
+              <input type="checkbox" checked={attendancePolicyConfirmed} onChange={(event) => {
+                const confirmed = event.target.checked;
+                setSettings((current) => ({
+                  ...current,
+                  attendance_policy_confirmed: confirmed ? "true" : "false",
+                  ...(confirmed ? { scheduled_start: "", scheduled_end: "", expected_working_minutes: "" } : { expected_working_minutes: "" }),
+                }));
+              }} />
+              <span>I confirm these working hours and attendance rules are approved company policy. Automated absence reminders and attendance completion percentages stay disabled until this is checked.</span>
+            </label>
           </div>
         </section>
         <section className="panel settings-panel">
@@ -2996,7 +3011,7 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
                   <tr key={holiday.id}>
                     <td>{formatDate(holiday.holidayDate)}</td>
                     <td>{holiday.name}</td>
-                    <td><Button type="button" variant="quiet" disabled={holidayBusy || holiday.holidayDate <= new Date().toISOString().slice(0, 10)} onClick={() => void removeHoliday(holiday.id)}>Remove</Button></td>
+                    <td><Button type="button" variant="quiet" disabled={holidayBusy || false} onClick={() => void removeHoliday(holiday.id)}>Remove</Button></td>
                   </tr>
                 ))}</tbody>
               </table>
