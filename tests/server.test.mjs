@@ -39,8 +39,8 @@ function applyCookies(jar, response) {
   }
 }
 
-async function request(path, { jar, csrf, method = "GET", body } = {}) {
-  const headers = { Origin: "http://localhost:5173" };
+async function request(path, { jar, csrf, method = "GET", body, headers: customHeaders } = {}) {
+  const headers = { Origin: "http://localhost:5173", ...(customHeaders || {}) };
   if (jar && Object.keys(jar).length) headers.Cookie = Object.entries(jar).map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("; ");
   if (method !== "GET") {
     headers["Content-Type"] = "application/json";
@@ -223,6 +223,7 @@ before(async () => {
       SMTP_HOST: "127.0.0.1",
       SMTP_PORT: String(smtpPort),
       SMTP_FROM: "portal@example.test",
+      TEST_CURRENT_DATE: "2026-11-04",
     },
     stdio: ["ignore", "ignore", "inherit"],
   });
@@ -246,7 +247,7 @@ before(async () => {
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });

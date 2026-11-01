@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   attendanceProgress,
   createApplicationOtp,
+  evaluateAttendanceDayPolicy,
   hashPassword,
   localDateTimeToUtc,
   makeCompanyEmployeeId,
@@ -34,6 +35,73 @@ test("company working calendar consistently excludes Sundays, second Saturdays, 
   assert.equal(isCompanyHoliday("2026-11-07"), false);
   assert.equal(isCompanyHoliday("2026-11-08"), true);
   assert.equal(isCompanyHoliday("2026-11-09", new Set(["2026-11-09"])), true);
+});
+
+test("evaluateAttendanceDayPolicy accurately classifies working and non-working days", () => {
+  const holidaysMap = new Map([["2026-11-09", "Diwali"]]);
+
+  // Sunday: 2026-11-01
+  const sunday = evaluateAttendanceDayPolicy("2026-11-01", holidaysMap);
+  assert.equal(sunday.isWorkingDay, false);
+  assert.equal(sunday.reason, "sunday");
+  assert.match(sunday.message, /Sunday.*weekly off/i);
+
+  // Second Saturday: 2026-11-14
+  const secondSat = evaluateAttendanceDayPolicy("2026-11-14", holidaysMap);
+  assert.equal(secondSat.isWorkingDay, false);
+  assert.equal(secondSat.reason, "second_saturday");
+  assert.match(secondSat.message, /second Saturday.*weekly off/i);
+
+  // First Saturday: 2026-11-07
+  const firstSat = evaluateAttendanceDayPolicy("2026-11-07", holidaysMap);
+  assert.equal(firstSat.isWorkingDay, true);
+  assert.equal(firstSat.reason, "working_day");
+
+  // Third Saturday: 2026-11-21
+  const thirdSat = evaluateAttendanceDayPolicy("2026-11-21", holidaysMap);
+  assert.equal(thirdSat.isWorkingDay, true);
+  assert.equal(thirdSat.reason, "working_day");
+
+  // Fourth Saturday: 2026-11-28
+  const fourthSat = evaluateAttendanceDayPolicy("2026-11-28", holidaysMap);
+  assert.equal(fourthSat.isWorkingDay, true);
+  assert.equal(fourthSat.reason, "working_day");
+
+  // Fifth Saturday: 2026-10-31
+  const fifthSat = evaluateAttendanceDayPolicy("2026-10-31", holidaysMap);
+  assert.equal(fifthSat.isWorkingDay, true);
+  assert.equal(fifthSat.reason, "working_day");
+
+  // Company Holiday: 2026-11-09
+  const holiday = evaluateAttendanceDayPolicy("2026-11-09", holidaysMap);
+  assert.equal(holiday.isWorkingDay, false);
+  assert.equal(holiday.reason, "company_holiday");
+  assert.equal(holiday.holidayName, "Diwali");
+  assert.match(holiday.message, /Diwali/);
+
+  // Normal weekday: 2026-11-04 (Wednesday)
+  const wednesday = evaluateAttendanceDayPolicy("2026-11-04", holidaysMap);
+  assert.equal(wednesday.isWorkingDay, true);
+  assert.equal(wednesday.reason, "working_day");
+
+  // Year boundary: 2026-12-31 (Thursday)
+  const newYearsEve = evaluateAttendanceDayPolicy("2026-12-31", holidaysMap);
+  assert.equal(newYearsEve.isWorkingDay, true);
+  assert.equal(newYearsEve.reason, "working_day");
+
+  // Year boundary: 2027-01-01 (Friday)
+  const newYear = evaluateAttendanceDayPolicy("2027-01-01", holidaysMap);
+  assert.equal(newYear.isWorkingDay, true);
+
+  // Year boundary: 2027-01-03 (Sunday)
+  const newYearSun = evaluateAttendanceDayPolicy("2027-01-03", holidaysMap);
+  assert.equal(newYearSun.isWorkingDay, false);
+  assert.equal(newYearSun.reason, "sunday");
+
+  // Year boundary: 2027-01-09 (2nd Saturday of January 2027)
+  const janSecondSat = evaluateAttendanceDayPolicy("2027-01-09", holidaysMap);
+  assert.equal(janSecondSat.isWorkingDay, false);
+  assert.equal(janSecondSat.reason, "second_saturday");
 });
 
 test("application OTPs are six-character alphanumeric codes containing a letter and a number", () => {

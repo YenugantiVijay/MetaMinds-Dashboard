@@ -10,6 +10,7 @@ import {
   attendanceProgress,
   countWorkingDays,
   createApplicationOtp,
+  evaluateAttendanceDayPolicy,
   hashPassword,
   isCompanyHoliday,
   isSecondSaturday,
@@ -106,7 +107,25 @@ function attendancePolicyConfigured(settings = settingsObject()) {
     Number(settings.expected_working_minutes) <= 1440;
 }
 
-function currentDateInZone(zone = getSetting("timezone") || "Asia/Kolkata", date = new Date()) {
+function getCompanyHolidaysMap() {
+  const rows = db.prepare("SELECT holiday_date, name FROM company_holidays").all();
+  const map = new Map();
+  for (const row of rows) {
+    map.set(row.holiday_date, row.name);
+  }
+  return map;
+}
+
+function currentDateInZone(zone = getSetting("timezone") || "Asia/Kolkata", date = new Date(), context) {
+  if (process.env.NODE_ENV !== "production") {
+    const testHeader = context?.headers?.["x-test-date"] || context?.req?.headers?.["x-test-date"];
+    if (testHeader && /^\d{4}-\d{2}-\d{2}$/.test(testHeader)) {
+      return testHeader;
+    }
+    if (process.env.TEST_CURRENT_DATE && /^\d{4}-\d{2}-\d{2}$/.test(process.env.TEST_CURRENT_DATE)) {
+      return process.env.TEST_CURRENT_DATE;
+    }
+  }
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
     year: "numeric",
@@ -375,9 +394,11 @@ function makeSession(res, userId) {
   return { rawSession, csrf };
 }
 
-function buildDashboard(user) {
+function buildDashboard(user, context) {
   const settings = settingsObject();
-  const today = currentDateInZone(settings.timezone);
+  const today = currentDateInZone(settings.timezone, undefined, context);
+  const holidaysMap = getCompanyHolidaysMap();
+  const attendanceDayPolicy = evaluateAttendanceDayPolicy(today, holidaysMap);
   const expectedMinutes = attendancePolicyConfigured(settings) ? Number(settings.expected_working_minutes) : null;
   const chartExpectedMinutes = expectedMinutes ?? 1440;
   const attendancePercentMinutes = expectedMinutes ?? 0;
@@ -385,6 +406,7 @@ function buildDashboard(user) {
     return {
       role: user.role,
       today,
+      attendanceDayPolicy,
       settings,
       emailConfigured: smtpConfiguration().configured,
       employees: db.prepare("SELECT COUNT(*) AS value FROM employees e JOIN users u ON u.id = e.user_id WHERE u.active = 1").get().value,
@@ -397,14 +419,14 @@ function buildDashboard(user) {
       attendanceTrend: db.prepare(`
         SELECT attendance_date AS date, COUNT(*) AS present,
           ROUND(AVG(CASE
-            WHEN worked_minutes IS NOT NULL THEN MIN(worked_minutes, ?)
-            WHEN check_out IS NULL THEN MIN(MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER)), ?)
+            WHEN worked_minutes IS NOT NULL THEN worked_minutes
+            WHEN check_out IS NULL THEN MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER))
             ELSE 0
           END), 0) AS averageMinutes
         FROM attendance_records
         WHERE attendance_date >= date(?, '-365 days') AND attendance_date <= ?
         GROUP BY attendance_date ORDER BY attendance_date
-      `).all(chartExpectedMinutes, chartExpectedMinutes, today, today),
+      `).all(today, today),
       attendanceReport: db.prepare(`
         WITH RECURSIVE calendar(day) AS (
           SELECT date(?, '-365 days')
@@ -515,6 +537,7 @@ function buildDashboard(user) {
     return {
       role: user.role,
       today,
+      attendanceDayPolicy,
       settings,
       teamMembers: visible.filter((employee) => employee.active).length,
       present: teamAttendance.length,
@@ -526,16 +549,51 @@ function buildDashboard(user) {
     };
   }
   const employee = getEmployeeForUser(user);
-  const attendance = db.prepare(`
-    SELECT *, check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes
+  let attendance = db.prepare(`
+    SELECT id, employee_id AS employeeId, attendance_date AS date, attendance_date,
+           check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes,
+           check_in, check_out, worked_minutes,
+           break_minutes AS breakMinutes, break_minutes,
+           status, checkout_reason AS checkoutReason, checkout_reason,
+           checkout_note AS checkoutNote, checkout_note
     FROM attendance_records WHERE employee_id = ? AND attendance_date = ?
   `).get(employee.id, today);
+
+  if (!attendance) {
+    attendance = db.prepare(`
+      SELECT id, employee_id AS employeeId, attendance_date AS date, attendance_date,
+             check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes,
+             check_in, check_out, worked_minutes,
+             break_minutes AS breakMinutes, break_minutes,
+             status, checkout_reason AS checkoutReason, checkout_reason,
+             checkout_note AS checkoutNote, checkout_note
+      FROM attendance_records WHERE employee_id = ? AND check_out IS NULL
+      ORDER BY attendance_date DESC, check_in DESC LIMIT 1
+    `).get(employee.id);
+  }
+
+  let activeBreak = null;
+  let totalBreakMinutes = attendance?.break_minutes ?? 0;
+  if (attendance && !attendance.check_out) {
+    activeBreak = db.prepare(`
+      SELECT * FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1
+    `).get(attendance.id);
+    const breakSumRow = db.prepare(`
+      SELECT SUM(MAX(0, CAST((julianday(COALESCE(break_end, 'now')) - julianday(break_start)) * 1440 AS INTEGER))) AS total
+      FROM attendance_breaks WHERE attendance_record_id = ?
+    `).get(attendance.id);
+    totalBreakMinutes = breakSumRow?.total || 0;
+  }
 
   // Live real-time worked minutes calculation
   const liveWorkedMinutes = attendance
     ? (attendance.check_out
         ? (attendance.worked_minutes ?? 0)
         : Math.max(0, Math.floor((Date.now() - Date.parse(attendance.check_in)) / 60000)))
+    : null;
+
+  const sessionStatus = attendance
+    ? (attendance.check_out ? "completed" : (activeBreak ? "on_break" : "active"))
     : null;
 
   const progress = liveWorkedMinutes !== null
@@ -545,8 +603,12 @@ function buildDashboard(user) {
   const liveAttendance = attendance
     ? {
         ...attendance,
+        status: sessionStatus,
         workedMinutes: liveWorkedMinutes,
         worked_minutes: liveWorkedMinutes,
+        breakMinutes: totalBreakMinutes,
+        break_minutes: totalBreakMinutes,
+        activeBreakStart: activeBreak?.break_start ?? null,
         progress,
       }
     : null;
@@ -561,76 +623,119 @@ function buildDashboard(user) {
 
   const attendanceTrend = db.prepare(`
     SELECT attendance_date AS date, 1 AS present,
-      ROUND(CASE
-        WHEN worked_minutes IS NOT NULL THEN MIN(worked_minutes, ?)
-        WHEN check_out IS NULL THEN MIN(MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER)), ?)
+      CASE
+        WHEN worked_minutes IS NOT NULL THEN worked_minutes
+        WHEN check_out IS NULL THEN MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER))
         ELSE 0
-      END, 0) AS averageMinutes
+      END AS averageMinutes,
+      status,
+      check_in AS checkIn,
+      check_out AS checkOut,
+      break_minutes AS breakMinutes
     FROM attendance_records
     WHERE employee_id = ? AND attendance_date >= date(?, '-365 days') AND attendance_date <= ?
     ORDER BY attendance_date
-  `).all(chartExpectedMinutes, chartExpectedMinutes, employee.id, today, today);
+  `).all(employee.id, today, today);
 
-  // Synchronize today's live minutes in trend
-  if (attendance && !attendance.check_out && liveWorkedMinutes !== null) {
-    const todayTrend = attendanceTrend.find((item) => item.date === today);
-    if (todayTrend) {
-      todayTrend.averageMinutes = liveWorkedMinutes;
+  // Synchronize current attendance session in trend
+  if (liveAttendance) {
+    const recordDate = liveAttendance.date || liveAttendance.attendance_date || today;
+    const existingTrend = attendanceTrend.find((item) => item.date === recordDate);
+    if (existingTrend) {
+      existingTrend.averageMinutes = liveWorkedMinutes;
+      existingTrend.status = liveAttendance.status;
+      existingTrend.breakMinutes = totalBreakMinutes;
+      existingTrend.checkIn = liveAttendance.checkIn;
+      existingTrend.checkOut = liveAttendance.checkOut;
     } else {
-      attendanceTrend.push({ date: today, present: 1, averageMinutes: liveWorkedMinutes });
+      attendanceTrend.push({
+        date: recordDate,
+        present: 1,
+        averageMinutes: liveWorkedMinutes,
+        status: liveAttendance.status,
+        checkIn: liveAttendance.checkIn,
+        checkOut: liveAttendance.checkOut,
+        breakMinutes: totalBreakMinutes,
+      });
     }
   }
 
-  const attendanceReport = db.prepare(`
-    WITH RECURSIVE calendar(day) AS (
-      SELECT date(?, '-30 days')
-      UNION ALL
-      SELECT date(day, '+1 day') FROM calendar WHERE day < ?
-    ),
-    workdays AS (
-      SELECT day FROM calendar
-      WHERE strftime('%w', day) != '0'
-        AND NOT (strftime('%w', day) = '6' AND CAST(strftime('%d', day) AS INTEGER) BETWEEN 8 AND 14)
-        AND NOT EXISTS (SELECT 1 FROM company_holidays h WHERE h.holiday_date = day)
-      UNION
-      SELECT ? WHERE EXISTS (SELECT 1 FROM attendance_records WHERE attendance_date = ? AND employee_id = ?)
-    )
-    SELECT w.day AS date,
-      CASE WHEN ar.id IS NOT NULL THEN 1 ELSE 0 END AS present,
-      1 AS expected,
-      (SELECT COUNT(*) FROM leave_requests lr WHERE lr.employee_id = ? AND lr.status = 'approved' AND lr.start_date <= w.day AND lr.end_date >= w.day) AS approvedLeave,
-      (SELECT COUNT(*) FROM attendance_exceptions ax WHERE ax.employee_id = ? AND ax.attendance_date = w.day AND ax.status != 'resolved') AS reviewRequired,
-      ROUND(
-        CASE
-          WHEN ar.worked_minutes IS NOT NULL THEN MIN(100, CAST(ar.worked_minutes AS REAL) / ? * 100)
-          WHEN ar.check_in IS NOT NULL THEN MIN(100, CAST(MAX(0, CAST((julianday('now') - julianday(ar.check_in)) * 1440 AS INTEGER)) AS REAL) / ? * 100)
-          WHEN (SELECT COUNT(*) FROM leave_requests lr WHERE lr.employee_id = ? AND lr.status = 'approved' AND lr.start_date <= w.day AND lr.end_date >= w.day) > 0 THEN 100
-          ELSE 0
-        END,
-        0
-      ) AS attendancePercent
-    FROM workdays w
-    LEFT JOIN attendance_records ar ON ar.attendance_date = w.day AND ar.employee_id = ?
-    ORDER BY w.day
-  `).all(today, today, today, today, employee.id, employee.id, employee.id, chartExpectedMinutes, chartExpectedMinutes, employee.id, employee.id);
+  // Authoritative 30-day attendance report
+  const rawEmployeeRecords = db.prepare(`
+    SELECT attendance_date AS date, check_in AS checkIn, check_out AS checkOut,
+           worked_minutes AS workedMinutes, break_minutes AS breakMinutes, status
+    FROM attendance_records
+    WHERE employee_id = ? AND attendance_date >= date(?, '-30 days') AND attendance_date <= ?
+  `).all(employee.id, today, today);
+  const employeeRecordsMap = new Map(rawEmployeeRecords.map((r) => [r.date, r]));
 
-  // Synchronize today's percentage with live calculated minutes
-  if (attendance && !attendance.check_out && liveWorkedMinutes !== null) {
-    const todayPct = Math.min(100, Math.round((liveWorkedMinutes / chartExpectedMinutes) * 100));
-    const todayRep = attendanceReport.find((item) => item.date === today);
-    if (todayRep) {
-      todayRep.attendancePercent = todayPct;
-      todayRep.present = 1;
+  const employeeApprovedLeaves = db.prepare(`
+    SELECT start_date, end_date FROM leave_requests
+    WHERE employee_id = ? AND status = 'approved' AND start_date <= ? AND end_date >= date(?, '-30 days')
+  `).all(employee.id, today, today);
+
+  const employeeExceptions = new Set(db.prepare(`
+    SELECT attendance_date FROM attendance_exceptions
+    WHERE employee_id = ? AND status != 'resolved' AND attendance_date >= date(?, '-30 days') AND attendance_date <= ?
+  `).all(employee.id, today, today).map((r) => r.attendance_date));
+
+  const attendanceReport = [];
+  const startDay = new Date(`${today}T00:00:00Z`);
+  for (let offset = 29; offset >= 0; offset -= 1) {
+    const d = new Date(startDay);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const dayStr = d.toISOString().slice(0, 10);
+    const isToday = dayStr === today;
+    const dayPolicy = evaluateAttendanceDayPolicy(dayStr, holidaysMap);
+    const rec = isToday && liveAttendance ? liveAttendance : employeeRecordsMap.get(dayStr);
+    const hasApprovedLeave = employeeApprovedLeaves.some((l) => l.start_date <= dayStr && l.end_date >= dayStr);
+    const hasException = employeeExceptions.has(dayStr);
+
+    let status = "not_recorded";
+    let workedMins = null;
+    let pct = null;
+
+    if (rec) {
+      workedMins = rec.workedMinutes ?? rec.worked_minutes ?? null;
+      if (rec.check_out || rec.checkOut) {
+        status = "completed";
+      } else if (rec.status === "on_break") {
+        status = "on_break";
+      } else {
+        status = "working";
+      }
+      if (expectedMinutes && expectedMinutes > 0 && workedMins !== null) {
+        pct = Math.min(100, Math.round((workedMins / expectedMinutes) * 100));
+      }
+    } else if (hasApprovedLeave) {
+      status = "approved_leave";
+      pct = expectedMinutes ? 100 : null;
+    } else if (hasException) {
+      status = "exception";
+      pct = 0;
+    } else if (!dayPolicy.isWorkingDay) {
+      if (dayPolicy.reason === "sunday" || dayPolicy.reason === "second_saturday") {
+        status = "weekly_off";
+      } else {
+        status = "company_holiday";
+      }
     } else {
-      attendanceReport.push({
-        date: today,
-        present: 1,
-        expected: 1,
-        approvedLeave: 0,
-        reviewRequired: 0,
-        attendancePercent: todayPct,
-      });
+      status = "not_recorded";
+      pct = expectedMinutes ? 0 : null;
     }
+
+    attendanceReport.push({
+      date: dayStr,
+      present: rec ? 1 : 0,
+      expected: dayPolicy.isWorkingDay && !hasApprovedLeave ? 1 : 0,
+      approvedLeave: hasApprovedLeave ? 1 : 0,
+      reviewRequired: hasException ? 1 : 0,
+      attendancePercent: pct,
+      status,
+      workedMinutes: workedMins,
+      holidayName: dayPolicy.holidayName || null,
+      breakMinutes: rec?.break_minutes ?? rec?.breakMinutes ?? 0,
+    });
   }
 
   // Calculate 25 Paid Leaves Entitlement & Balance
@@ -654,14 +759,20 @@ function buildDashboard(user) {
   return {
     role: user.role,
     today,
+    attendanceDayPolicy,
     settings,
     attendance: liveAttendance,
     pendingLeaves: db.prepare("SELECT COUNT(*) AS value FROM leave_requests WHERE employee_id = ? AND status = 'pending'").get(employee.id).value,
     leaveTypes: db.prepare("SELECT id, name, paid FROM leave_types WHERE active = 1 ORDER BY name").all(),
     leaves,
     leaveBalance,
+    todayWorkReport: attendance?.id ? db.prepare(`
+      SELECT id, work_summary AS workSummary, project_reference AS projectReference,
+             blockers, submitted_at AS submittedAt
+      FROM daily_work_reports WHERE attendance_record_id = ?
+    `).get(attendance.id) || null : null,
     exceptions: db.prepare("SELECT attendance_date AS date, deadline_at AS deadlineAt, status FROM attendance_exceptions WHERE employee_id = ? ORDER BY id DESC LIMIT 5").all(employee.id),
-    recentAttendance: db.prepare("SELECT attendance_date AS date, check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes FROM attendance_records WHERE employee_id = ? ORDER BY attendance_date DESC LIMIT 7").all(employee.id),
+    recentAttendance: db.prepare("SELECT attendance_date AS date, check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes, break_minutes AS breakMinutes, checkout_reason AS checkoutReason, checkout_note AS checkoutNote, status FROM attendance_records WHERE employee_id = ? ORDER BY attendance_date DESC, check_in DESC LIMIT 7").all(employee.id),
     attendanceTrend,
     attendanceReport,
   };
@@ -1233,7 +1344,7 @@ async function route(req, res, context, body, url) {
   }
   if (method === "GET" && path === "/api/dashboard") {
     const user = requireUser(context);
-    return { status: 200, body: buildDashboard(user) };
+    return { status: 200, body: buildDashboard(user, context) };
   }
   if (method === "GET" && path === "/api/applications") {
     const user = requireUser(context);
@@ -1279,9 +1390,14 @@ async function route(req, res, context, body, url) {
   if (method === "GET" && path === "/api/policy") {
     requireUser(context);
     const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const today = currentDateInZone(zone, undefined, context);
+    const holidaysMap = getCompanyHolidaysMap();
+    const attendanceDayPolicy = evaluateAttendanceDayPolicy(today, holidaysMap);
     return { status: 200, body: {
       timezone: settings.timezone,
-      today: currentDateInZone(settings.timezone),
+      today,
+      attendanceDayPolicy,
       expectedWorkingMinutes: attendancePolicyConfigured(settings) ? Number(settings.expected_working_minutes) : null,
       scheduledStart: settings.scheduled_start,
       scheduledEnd: settings.scheduled_end,
@@ -1291,30 +1407,277 @@ async function route(req, res, context, body, url) {
   if (method === "POST" && path === "/api/attendance/check-in") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
-    const date = currentDateInZone();
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+
+    const holidaysMap = getCompanyHolidaysMap();
+    const dayPolicy = evaluateAttendanceDayPolicy(date, holidaysMap);
+    if (!dayPolicy.isWorkingDay) {
+      fail(403, dayPolicy.message);
+    }
+
     const now = timestamp();
     try {
-      db.prepare("INSERT INTO attendance_records(employee_id, attendance_date, check_in) VALUES (?, ?, ?)").run(employee.id, date, now);
+      db.prepare("INSERT INTO attendance_records(employee_id, attendance_date, check_in, status) VALUES (?, ?, ?, 'active')").run(employee.id, date, now);
     } catch (error) {
       if (error.code === "ERR_SQLITE_ERROR") fail(409, "You have already checked in for today.");
       throw error;
     }
     db.prepare("UPDATE attendance_exceptions SET status = 'resolved', resolved_at = ? WHERE employee_id = ? AND attendance_date = ? AND status != 'resolved'").run(now, employee.id, date);
     audit(user.user_id, "attendance.check_in", "attendance_record", `${employee.id}:${date}`);
-    return { status: 201, body: { checkIn: now, date } };
+    return { status: 201, body: { checkIn: now, date, status: "active" } };
+  }
+  if (method === "POST" && path === "/api/attendance/break/start") {
+    const user = requireUser(context);
+    const employee = getEmployeeForUser(user);
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+    let record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    if (!record || record.check_out) {
+      const openRecord = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND check_out IS NULL ORDER BY attendance_date DESC, check_in DESC LIMIT 1").get(employee.id);
+      if (openRecord) {
+        record = openRecord;
+      }
+    }
+    if (!record) fail(409, "Check in before starting a break.");
+    if (record.check_out) fail(409, "Attendance session is already completed.");
+
+    const openBreak = db.prepare("SELECT * FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NULL").get(record.id);
+    if (openBreak || record.status === "on_break") {
+      fail(409, "You are already on a break.");
+    }
+
+    const now = timestamp();
+    db.prepare("INSERT INTO attendance_breaks(attendance_record_id, break_start) VALUES (?, ?)").run(record.id, now);
+    db.prepare("UPDATE attendance_records SET status = 'on_break' WHERE id = ?").run(record.id);
+    audit(user.user_id, "attendance.break_start", "attendance_record", record.id);
+    return { status: 200, body: { breakStart: now, status: "on_break" } };
+  }
+  if (method === "POST" && path === "/api/attendance/break/resume") {
+    const user = requireUser(context);
+    const employee = getEmployeeForUser(user);
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+    let record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    if (!record || record.check_out) {
+      const openRecord = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND check_out IS NULL ORDER BY attendance_date DESC, check_in DESC LIMIT 1").get(employee.id);
+      if (openRecord) {
+        record = openRecord;
+      }
+    }
+    if (!record) fail(409, "Check in before resuming work.");
+    if (record.check_out) fail(409, "Attendance session is already completed.");
+
+    const openBreak = db.prepare("SELECT * FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1").get(record.id);
+    if (!openBreak) {
+      fail(409, "No active break found to resume.");
+    }
+
+    const now = timestamp();
+    db.prepare("UPDATE attendance_breaks SET break_end = ? WHERE id = ?").run(now, openBreak.id);
+
+    const breakSumRow = db.prepare(`
+      SELECT SUM(MAX(0, CAST((julianday(break_end) - julianday(break_start)) * 1440 AS INTEGER))) AS total
+      FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NOT NULL
+    `).get(record.id);
+    const totalBreakMinutes = breakSumRow?.total || 0;
+
+    db.prepare("UPDATE attendance_records SET status = 'active', break_minutes = ? WHERE id = ?").run(totalBreakMinutes, record.id);
+    audit(user.user_id, "attendance.break_resume", "attendance_record", record.id);
+    return { status: 200, body: { breakEnd: now, breakMinutes: totalBreakMinutes, status: "active" } };
   }
   if (method === "POST" && path === "/api/attendance/check-out") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
-    const date = currentDateInZone();
-    const record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+    let record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    if (!record || record.check_out) {
+      const openRecord = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND check_out IS NULL ORDER BY attendance_date DESC, check_in DESC LIMIT 1").get(employee.id);
+      if (openRecord) {
+        record = openRecord;
+      }
+    }
     if (!record) fail(409, "Check in before checking out.");
     if (record.check_out) fail(409, "You have already checked out for today.");
+
+    const validReasons = ["workday_complete", "leaving_early", "other"];
+    let reason = "workday_complete";
+    if (typeof body.reason === "string" && validReasons.includes(body.reason)) {
+      reason = body.reason;
+    }
+
+    let workSummary = null;
+    let projectReference = null;
+    let blockers = null;
+    let note = null;
+
+    if (reason === "workday_complete") {
+      if (body.reason === "workday_complete" || body.workSummary !== undefined) {
+        workSummary = requiredString(body.workSummary, "Daily work summary", 2000, 20);
+      } else {
+        workSummary = "Workday completed shift.";
+      }
+      if (typeof body.projectReference === "string" && body.projectReference.trim()) {
+        projectReference = body.projectReference.trim().slice(0, 255);
+      }
+      if (typeof body.blockers === "string" && body.blockers.trim()) {
+        blockers = body.blockers.trim().slice(0, 1000);
+      }
+      note = workSummary;
+    } else if (reason === "leaving_early") {
+      note = requiredString(body.note, "Early departure reason", 500, 3);
+    } else if (reason === "other") {
+      note = requiredString(body.note, "Explanation note", 500, 3);
+    }
+
     const now = timestamp();
-    const minutes = workedMinutes(record.check_in, now);
-    db.prepare("UPDATE attendance_records SET check_out = ?, worked_minutes = ? WHERE id = ? AND check_out IS NULL").run(now, minutes, record.id);
-    audit(user.user_id, "attendance.check_out", "attendance_record", record.id);
-    return { status: 200, body: { checkOut: now, workedMinutes: minutes } };
+    let minutes = 0;
+    let totalBreakMinutes = 0;
+
+    withTransaction(() => {
+      // Auto-close any unfinalized break interval
+      db.prepare("UPDATE attendance_breaks SET break_end = ? WHERE attendance_record_id = ? AND break_end IS NULL").run(now, record.id);
+
+      const breakSumRow = db.prepare(`
+        SELECT SUM(MAX(0, CAST((julianday(break_end) - julianday(break_start)) * 1440 AS INTEGER))) AS total
+        FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NOT NULL
+      `).get(record.id);
+      totalBreakMinutes = breakSumRow?.total || 0;
+
+      minutes = workedMinutes(record.check_in, now);
+      db.prepare(`
+        UPDATE attendance_records
+        SET check_out = ?, worked_minutes = ?, break_minutes = ?, checkout_reason = ?, checkout_note = ?, status = 'completed'
+        WHERE id = ? AND check_out IS NULL
+      `).run(now, minutes, totalBreakMinutes, reason, note, record.id);
+
+      if (reason === "workday_complete" && workSummary) {
+        db.prepare(`
+          INSERT INTO daily_work_reports (employee_id, attendance_record_id, work_date, work_summary, project_reference, blockers, submitted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(attendance_record_id) DO UPDATE SET
+            work_summary = excluded.work_summary,
+            project_reference = excluded.project_reference,
+            blockers = excluded.blockers,
+            updated_at = excluded.submitted_at
+        `).run(employee.id, record.id, record.attendance_date, workSummary, projectReference, blockers, now);
+      }
+    });
+
+    audit(user.user_id, "attendance.check_out", "attendance_record", `${record.id}:${reason}`);
+    return {
+      status: 200,
+      body: {
+        checkOut: now,
+        workedMinutes: minutes,
+        breakMinutes: totalBreakMinutes,
+        checkoutReason: reason,
+        workSummary,
+        status: "completed",
+      },
+    };
+  }
+  if (method === "GET" && (path === "/api/daily-work-reports" || path === "/api/attendance/reports")) {
+    const user = requireUser(context);
+
+    if (user.role === "employee") {
+      const employee = getEmployeeForUser(user);
+      const reports = db.prepare(`
+        SELECT r.id, r.employee_id AS employeeId, r.attendance_record_id AS attendanceRecordId,
+               r.work_date AS workDate, r.work_summary AS workSummary,
+               r.project_reference AS projectReference, r.blockers,
+               r.submitted_at AS submittedAt, r.updated_at AS updatedAt,
+               e.full_name AS employeeName, e.employee_id AS companyEmployeeId,
+               d.name AS department, a.worked_minutes AS workedMinutes,
+               a.checkout_reason AS checkoutReason
+        FROM daily_work_reports r
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN attendance_records a ON a.id = r.attendance_record_id
+        WHERE r.employee_id = ?
+        ORDER BY r.work_date DESC, r.submitted_at DESC
+        LIMIT 60
+      `).all(employee.id);
+      return { status: 200, body: reports };
+    }
+
+    if (user.role === "ceo") {
+      let sql = `
+        SELECT r.id, r.employee_id AS employeeId, r.attendance_record_id AS attendanceRecordId,
+               r.work_date AS workDate, r.work_summary AS workSummary,
+               r.project_reference AS projectReference, r.blockers,
+               r.submitted_at AS submittedAt, r.updated_at AS updatedAt,
+               e.full_name AS employeeName, e.employee_id AS companyEmployeeId,
+               d.name AS department, a.worked_minutes AS workedMinutes,
+               a.checkout_reason AS checkoutReason
+        FROM daily_work_reports r
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN attendance_records a ON a.id = r.attendance_record_id
+        WHERE 1=1
+      `;
+      const params = [];
+      const dateParam = url.searchParams.get("date");
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        sql += " AND r.work_date = ?";
+        params.push(dateParam);
+      }
+      const monthParam = url.searchParams.get("month");
+      if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+        sql += " AND r.work_date LIKE ?";
+        params.push(`${monthParam}%`);
+      }
+      const empParam = url.searchParams.get("employeeId");
+      if (empParam) {
+        sql += " AND (e.employee_id = ? OR e.full_name LIKE ?)";
+        params.push(empParam, `%${empParam}%`);
+      }
+      const deptParam = url.searchParams.get("department");
+      if (deptParam) {
+        sql += " AND d.name = ?";
+        params.push(deptParam);
+      }
+      sql += " ORDER BY r.work_date DESC, r.submitted_at DESC LIMIT 100";
+      const reports = db.prepare(sql).all(...params);
+      return { status: 200, body: reports };
+    }
+
+    if (user.role === "team_lead") {
+      const visible = listVisibleEmployees(user);
+      const employeeIds = visible.map((emp) => emp.id);
+      if (!employeeIds.length) return { status: 200, body: [] };
+      const placeholders = employeeIds.map(() => "?").join(",");
+      let sql = `
+        SELECT r.id, r.employee_id AS employeeId, r.attendance_record_id AS attendanceRecordId,
+               r.work_date AS workDate, r.work_summary AS workSummary,
+               r.project_reference AS projectReference, r.blockers,
+               r.submitted_at AS submittedAt, r.updated_at AS updatedAt,
+               e.full_name AS employeeName, e.employee_id AS companyEmployeeId,
+               d.name AS department, a.worked_minutes AS workedMinutes,
+               a.checkout_reason AS checkoutReason
+        FROM daily_work_reports r
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN attendance_records a ON a.id = r.attendance_record_id
+        WHERE r.employee_id IN (${placeholders})
+      `;
+      const params = [...employeeIds];
+      const dateParam = url.searchParams.get("date");
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        sql += " AND r.work_date = ?";
+        params.push(dateParam);
+      }
+      sql += " ORDER BY r.work_date DESC, r.submitted_at DESC LIMIT 100";
+      const reports = db.prepare(sql).all(...params);
+      return { status: 200, body: reports };
+    }
+
+    fail(403, "You are not authorized to view daily work reports.");
   }
   if (method === "POST" && path === "/api/leave") {
     const user = requireUser(context);
