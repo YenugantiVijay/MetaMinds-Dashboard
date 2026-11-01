@@ -316,7 +316,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
     position: "QA analyst",
   });
   assert.equal(application.status, 201);
-  assert.match(application.payload.reference, /^MM-[0-9]{4}-[0-9]{4}$/);
+  assert.match(application.payload.reference, /^MM-APP-[A-F0-9]{32}$/);
   const applicationRow = adminDb.prepare("SELECT status, mobile, password_hash, email_verified_at, phone_verified_at FROM employee_applications WHERE id = ?").get(application.payload.id);
   assert.equal(applicationRow.status, "pending");
   assert.equal(applicationRow.mobile, "");
@@ -361,7 +361,11 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const idYear = new Intl.DateTimeFormat("en", { timeZone: "Asia/Kolkata", year: "numeric" }).format(new Date());
   assert.match(approved.payload.employeeId, /^MM-[0-9]{4}-[0-9]{4}$/);
   assert.ok(approved.payload.employeeId.startsWith("MM-" + idYear + "-"));
-  assert.equal(approved.payload.employeeId, application.payload.reference);
+  assert.notEqual(approved.payload.employeeId, application.payload.reference);
+  const publicStatus = await request(`/api/applications/status?reference=${encodeURIComponent(application.payload.reference)}`);
+  assert.equal(publicStatus.status, 200);
+  assert.equal(publicStatus.payload.status, "approved");
+  assert.equal(publicStatus.payload.employeeId, approved.payload.employeeId);
   assert.equal(approved.payload.emailQueued, true);
   const provisioned = adminDb.prepare("SELECT id, active FROM users WHERE email = ?").get("applicant@example.test");
   assert.equal(provisioned.active, 1);
@@ -401,6 +405,14 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.ok(message.html.toLowerCase().includes("your official employee id"));
   assert.ok(message.html.includes(approved.payload.employeeId));
   assert.equal(adminDb.prepare("SELECT password_hash FROM employee_applications WHERE id = ?").get(application.payload.id).password_hash, null);
+
+  const referenceLogin = await request("/api/auth/login", {
+    jar: employeeJar,
+    csrf: employeeCsrf,
+    method: "POST",
+    body: { identifier: application.payload.reference, password: "Synthetic strong password 4321!" },
+  });
+  assert.equal(referenceLogin.status, 401);
 
   const employeeLogin = await request("/api/auth/login", {
     jar: employeeJar,
