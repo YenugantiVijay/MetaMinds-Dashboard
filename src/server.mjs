@@ -769,15 +769,9 @@ function createApplication(body, context) {
       UNION ALL SELECT 1 FROM employee_applications WHERE email = ? AND status = 'pending'
       LIMIT 1
     `).get(email, email);
-    const year = Number(currentDateInZone().slice(0, 4));
-    let employeeId = makeCompanyEmployeeId(year);
-    while (
-      db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId) ||
-      db.prepare("SELECT 1 FROM employee_applications WHERE reference = ?").get(employeeId)
-    ) {
-      employeeId = makeCompanyEmployeeId(year);
-    }
-    const reference = employeeId;
+    // Application references are opaque bearer tokens, not predictable employee IDs.
+    // Employee IDs are allocated separately during CEO approval.
+    const reference = `MM-APP-${randomBytes(16).toString("hex").toUpperCase()}`;
     const result = db.prepare(`
       INSERT INTO employee_applications(
         reference, full_name, first_name, last_name, email, mobile, phone, employment_type,
@@ -841,17 +835,9 @@ function approveApplication(user, applicationId) {
     if (application.status !== "pending") fail(409, "This application has already been reviewed.");
 
     const currentYear = Number(currentDateInZone().slice(0, 4));
-
-    let employeeId = application.reference;
-    if (!/^MM-\d{4}-[1-9]{4}$/.test(employeeId)) {
+    let employeeId = makeCompanyEmployeeId(currentYear);
+    while (db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId)) {
       employeeId = makeCompanyEmployeeId(currentYear);
-      while (
-        db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId) ||
-        db.prepare("SELECT 1 FROM employee_applications WHERE reference = ? AND id != ?").get(employeeId, application.id)
-      ) {
-        employeeId = makeCompanyEmployeeId(currentYear);
-      }
-      db.prepare("UPDATE employee_applications SET reference = ? WHERE id = ?").run(employeeId, application.id);
     }
     let departmentId = null;
     if (application.department) {
@@ -972,7 +958,7 @@ function runAttendanceExceptions() {
   const zone = settings.timezone || "Asia/Kolkata";
   const today = currentDateInZone(zone);
   const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
-  if (weekday === 0) return;
+  if (weekday === 0 || isSecondSaturday(today)) return;
   if (db.prepare("SELECT 1 FROM company_holidays WHERE holiday_date = ?").get(today)) return;
   const start = settings.scheduled_start || "10:00";
   const end = settings.scheduled_end || "18:00";
@@ -1120,17 +1106,15 @@ async function route(req, res, context, body, url) {
     const password = requiredString(body.password, "Password", 256, 1);
     rateLimit(req, `login:${hash(identifier)}`, 8, 15 * 60 * 1000);
     const user = db.prepare(`
-      SELECT u.* FROM users u 
+      SELECT u.* FROM users u
       LEFT JOIN employees e ON e.user_id = u.id
-      LEFT JOIN employee_applications ea ON (ea.email = u.email OR ea.reference = e.employee_id)
       WHERE (
-        u.email = ? COLLATE NOCASE 
+        u.email = ? COLLATE NOCASE
         OR e.employee_id = ? COLLATE NOCASE
-        OR ea.reference = ? COLLATE NOCASE
         OR (? = 'ceo' AND u.email = 'demo.ceo@metaminds.local')
         OR (? = 'employee' AND u.email = 'demo.employee@metaminds.local')
       ) LIMIT 1
-    `).get(identifier, identifier, identifier, identifier, identifier);
+    `).get(identifier, identifier, identifier, identifier);
     if (!user) {
       const pendingApp = db.prepare(`
         SELECT reference, status, rejection_reason FROM employee_applications
