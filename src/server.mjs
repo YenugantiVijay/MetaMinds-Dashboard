@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { createReadStream, existsSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
-import { createHash, randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { createHash, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import nodemailer from "nodemailer";
 import { getSmtpConfiguration } from "./smtp-config.mjs";
@@ -56,6 +56,18 @@ function fail(status, message) {
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function timingSafeStringEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function timingSafeHashEqual(left, right) {
+  if (!/^[a-f0-9]{64}$/.test(left ?? "") || !/^[a-f0-9]{64}$/.test(right ?? "")) return false;
+  return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
 
 function timestamp() {
@@ -131,7 +143,7 @@ function setCookies(res, values) {
 }
 
 function csrfToken(res, cookieJar, session) {
-  if (cookieJar.mm_csrf && (!session || hash(cookieJar.mm_csrf) === session.csrf_hash)) return cookieJar.mm_csrf;
+  if (cookieJar.mm_csrf && (!session || timingSafeHashEqual(hash(cookieJar.mm_csrf), session.csrf_hash))) return cookieJar.mm_csrf;
   const value = randomBytes(32).toString("base64url");
   if (session) db.prepare("UPDATE sessions SET csrf_hash = ? WHERE token_hash = ?").run(hash(value), session.token_hash);
   setCookies(res, [
@@ -175,10 +187,10 @@ function checkCsrf(req, context) {
     fail(403, "A valid request origin is required.");
   }
   const headerToken = req.headers["x-csrf-token"];
-  if (typeof headerToken !== "string" || !context.jar.mm_csrf || headerToken !== context.jar.mm_csrf) {
+  if (typeof headerToken !== "string" || !context.jar.mm_csrf || !timingSafeStringEqual(headerToken, context.jar.mm_csrf)) {
     fail(403, "Your session expired. Refresh the page and try again.");
   }
-  if (context.user && hash(headerToken) !== context.user.csrf_hash) {
+  if (context.user && !timingSafeHashEqual(hash(headerToken), context.user.csrf_hash)) {
     fail(403, "Your session expired. Refresh the page and try again.");
   }
 }
@@ -725,7 +737,7 @@ function verifyApplicationOtp(body, context) {
     fail(400, "This verification code is missing or expired. Request a new code.");
   }
   if (verification.email_attempts >= 5) fail(429, "Too many incorrect codes. Request a new verification code.");
-  if (hash(`${sessionHash}:email:${code}`) !== verification.email_code_hash) {
+  if (!timingSafeHashEqual(hash(`${sessionHash}:email:${code}`), verification.email_code_hash)) {
     db.prepare("UPDATE application_verifications SET email_attempts = email_attempts + 1 WHERE session_hash = ?").run(sessionHash);
     fail(400, "That verification code is incorrect. Check it and try again.");
   }
