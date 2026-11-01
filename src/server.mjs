@@ -877,40 +877,7 @@ function approveApplication(user, applicationId) {
       employeeRowId = Number(employeeResult.lastInsertRowid);
     }
     
-    // Initialize 25 paid leave quota for approved employee
-    const annualLeaveType = db.prepare("SELECT id FROM leave_types WHERE paid = 1 LIMIT 1").get();
-    if (annualLeaveType) {
-      db.prepare(`
-        INSERT OR IGNORE INTO leave_balances(employee_id, leave_type_id, period_year, entitled_days, used_days)
-        VALUES (?, ?, ?, 25, 0)
-      `).run(employeeRowId, annualLeaveType.id, currentYear);
-    }
-
-    // Initialize salary structure and components based on discussed salary
-    const rawSalary = String(application.discussed_salary || "").replace(/[^0-9]/g, "");
-    const salaryMonthly = parseInt(rawSalary, 10);
-    if (!Number.isNaN(salaryMonthly) && salaryMonthly > 0) {
-      const effectiveDate = application.proposed_joining_date || currentDateInZone();
-      const basic = Math.round(salaryMonthly * 0.50);
-      const hra = Math.round(salaryMonthly * 0.30);
-      const special = Math.max(0, salaryMonthly - basic - hra);
-
-      const existingStruct = db.prepare("SELECT id FROM salary_structures WHERE employee_id = ? AND effective_from = ?").get(employeeRowId, effectiveDate);
-      let structId;
-      if (existingStruct) {
-        structId = existingStruct.id;
-        db.prepare("DELETE FROM salary_components WHERE salary_structure_id = ?").run(structId);
-      } else {
-        const structResult = db.prepare(`
-          INSERT INTO salary_structures(employee_id, effective_from, currency)
-          VALUES (?, ?, 'INR')
-        `).run(employeeRowId, effectiveDate);
-        structId = Number(structResult.lastInsertRowid);
-      }
-      db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'Basic Salary', 'earning', ?)").run(structId, basic * 100);
-      db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'House Rent Allowance (HRA)', 'earning', ?)").run(structId, hra * 100);
-      db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'Special Allowance', 'earning', ?)").run(structId, special * 100);
-    }
+    // Salary structures and leave entitlements are not fabricated from an application form.
 
     db.prepare("UPDATE employee_applications SET status = 'approved', reviewed_by = ?, reviewed_at = ?, password_hash = NULL WHERE id = ? AND status = 'pending'").run(user.user_id, timestamp(), application.id);
     audit(user.user_id, "application.approved", "employee_application", application.id);
@@ -1341,38 +1308,45 @@ async function route(req, res, context, body, url) {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const leaveTypeId = Number(body.leaveTypeId);
-    if (!Number.isInteger(leaveTypeId) || !db.prepare("SELECT 1 FROM leave_types WHERE id = ? AND active = 1").get(leaveTypeId)) {
-      fail(400, "Choose an available leave type.");
-    }
+    const leaveType = Number.isInteger(leaveTypeId)
+      ? db.prepare("SELECT id, paid FROM leave_types WHERE id = ? AND active = 1").get(leaveTypeId)
+      : null;
+    if (!leaveType) fail(400, "Choose an available leave type.");
     const startDate = validDate(body.startDate, "Start date");
     const endDate = validDate(body.endDate, "End date");
     if (startDate > endDate) fail(400, "End date must be on or after the start date.");
     const reason = requiredString(body.reason, "Reason", 1000, 3);
-
     const holidaysSet = new Set(db.prepare("SELECT holiday_date FROM company_holidays").all().map((r) => r.holiday_date));
     const workingDays = countWorkingDays(startDate, endDate, holidaysSet);
-    if (workingDays === 0) {
-      fail(400, "The requested period contains only non-working days or company holidays.");
-    }
+    if (workingDays === 0) fail(400, "The requested period contains only non-working days or company holidays.");
 
     const year = startDate.slice(0, 4);
-    const approvedRow = db.prepare(`
-      SELECT COALESCE(SUM(working_days_count), 0) AS used
-      FROM leave_requests lr
-      JOIN leave_types lt ON lt.id = lr.leave_type_id
-      WHERE lr.employee_id = ? AND lr.status = 'approved' AND lt.paid = 1
-        AND strftime('%Y', lr.start_date) = ?
-    `).get(employee.id, year);
-    const usedDays = approvedRow?.used ?? 0;
-    const entitledDays = 25;
-    const remaining = Math.max(0, entitledDays - usedDays);
+    let entitledDays = null;
+    let remaining = null;
+    if (leaveType.paid) {
+      const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
+      entitledDays = /^\\d{1,3}$/.test(configured) ? Number(configured) : null;
+      if (entitledDays === null || entitledDays > 365) {
+        fail(503, "Paid leave is unavailable until the company approves and configures its annual paid-leave entitlement.");
+      }
+      const approvedRow = db.prepare(`
+        SELECT COALESCE(SUM(CASE
+          WHEN lr.pay_treatment = 'half_pay' THEN lr.working_days_count * 0.5
+          WHEN lr.pay_treatment = 'unpaid' THEN 0
+          ELSE lr.working_days_count
+        END), 0) AS used
+        FROM leave_requests lr
+        JOIN leave_types lt ON lt.id = lr.leave_type_id
+        WHERE lr.employee_id = ? AND lr.status = 'approved' AND lt.paid = 1
+          AND strftime('%Y', lr.start_date) = ?
+      `).get(employee.id, year);
+      remaining = Math.max(0, entitledDays - (approvedRow?.used ?? 0));
+    }
 
-    let payTreatment = "full_paid";
+    let payTreatment = leaveType.paid ? "full_paid" : "unpaid";
     let requiresCeoApproval = 0;
     let excessDays = 0;
-
-    if (workingDays > remaining) {
-      payTreatment = "half_pay";
+    if (leaveType.paid && workingDays > remaining) {
       requiresCeoApproval = 1;
       excessDays = workingDays - remaining;
     }
@@ -1402,35 +1376,41 @@ async function route(req, res, context, body, url) {
             JOIN users u ON u.id = manager_employee.user_id
             WHERE member.employee_id = ? AND u.role = 'team_lead' AND u.active = 1
           `).all(employee.id);
-
       const targetApprovers = approvers.length ? approvers : db.prepare("SELECT id, email FROM users WHERE role = 'ceo' AND active = 1").all();
       for (const approver of targetApprovers) {
-        notifyUser(approver.id, "leave", requiresCeoApproval ? "Excess leave needs CEO approval" : "Leave request submitted",
+        notifyUser(approver.id, "leave", requiresCeoApproval ? "Paid leave needs CEO approval" : "Leave request submitted",
           requiresCeoApproval
-            ? `Employee requested ${workingDays} days (${excessDays} days beyond 25 paid limit). CEO review required.`
+            ? `Employee requested ${workingDays} paid leave days (${excessDays} days beyond the configured annual entitlement). CEO review required.`
             : "A new leave request is waiting for your review.");
-        queueEmail(approver.email, requiresCeoApproval ? "Excess leave request pending CEO approval" : "Leave request submitted",
+        queueEmail(approver.email, requiresCeoApproval ? "Paid leave request pending CEO approval" : "Leave request submitted",
           "A new leave request is waiting for your review. Sign in to the people portal to review it.");
       }
       return Number(inserted.lastInsertRowid);
     });
-    return { status: 201, body: { id: result, status: "pending", requiresCeoApproval, excessDays, workingDays } };
+    return { status: 201, body: { id: result, status: "pending", requiresCeoApproval, excessDays, workingDays, payTreatment } };
   }
   if (method === "GET" && path === "/api/leave/balance") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const year = currentDateInZone().slice(0, 4);
+    const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
+    const entitled = /^\\d{1,3}$/.test(configured) ? Number(configured) : null;
+    if (entitled === null || entitled > 365) {
+      fail(503, "Paid leave balances are unavailable until the company approves and configures its annual paid-leave entitlement.");
+    }
     const approvedRow = db.prepare(`
-      SELECT COALESCE(SUM(working_days_count), 0) AS used
+      SELECT COALESCE(SUM(CASE
+        WHEN lr.pay_treatment = 'half_pay' THEN lr.working_days_count * 0.5
+        WHEN lr.pay_treatment = 'unpaid' THEN 0
+        ELSE lr.working_days_count
+      END), 0) AS used
       FROM leave_requests lr
       JOIN leave_types lt ON lt.id = lr.leave_type_id
       WHERE lr.employee_id = ? AND lr.status = 'approved' AND lt.paid = 1
         AND strftime('%Y', lr.start_date) = ?
     `).get(employee.id, year);
     const used = approvedRow?.used ?? 0;
-    const entitled = 25;
-    const remaining = Math.max(0, entitled - used);
-    return { status: 200, body: { entitled, used, remaining, year: Number(year) } };
+    return { status: 200, body: { entitled, used, remaining: Math.max(0, entitled - used), year: Number(year) } };
   }
   if (method === "GET" && path === "/api/leave") {
     const user = requireUser(context);
@@ -1468,7 +1448,7 @@ async function route(req, res, context, body, url) {
       FROM leave_requests lr JOIN leave_types lt ON lt.id = lr.leave_type_id WHERE lr.employee_id = ? ORDER BY lr.id DESC
     `).all(employee.id) };
   }
-  const leaveAction = path.match(/^\/api\/leave\/(\d+)\/(approve|reject)$/);
+  const leaveAction = path.match(/^\\/api\\/leave\\/(\\d+)\\/(approve|reject)$/);
   if (method === "POST" && leaveAction) {
     const user = requireUser(context);
     requireRole(user, "ceo", "team_lead");
@@ -1476,22 +1456,24 @@ async function route(req, res, context, body, url) {
     if (!request) fail(404, "Pending leave request not found.");
     if (user.employee_row_id === request.employee_id) fail(403, "You cannot approve your own leave request.");
     if (!canAccessEmployee(user, request.employee_id)) fail(403, "This employee is outside your assigned team.");
-
+    const leaveType = db.prepare("SELECT paid FROM leave_types WHERE id = ?").get(request.leave_type_id);
+    if (!leaveType) fail(409, "The leave type for this request is no longer available.");
     if (request.requires_ceo_approval && user.role !== "ceo") {
-      fail(403, "This request exceeds the 25 paid leave quota and requires CEO authorization.");
+      fail(403, "This request exceeds the configured annual paid-leave entitlement and requires CEO authorization.");
     }
-
     const decision = leaveAction[2] === "approve" ? "approved" : "rejected";
     const reason = decision === "rejected" ? requiredString(body.reason, "Rejection reason", 500, 3) : null;
-
-    let finalPayTreatment = request.pay_treatment || "full_paid";
-    if (decision === "approved" && user.role === "ceo" && body.payTreatment) {
-      if (["full_paid", "half_pay", "unpaid"].includes(body.payTreatment)) {
+    let finalPayTreatment = leaveType.paid ? (request.pay_treatment || "full_paid") : "unpaid";
+    if (decision === "approved" && leaveType.paid) {
+      const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
+      if (!/^\\d{1,3}$/.test(configured) || Number(configured) > 365) {
+        fail(503, "Paid leave approval is unavailable until the company configures its annual paid-leave entitlement.");
+      }
+      if (user.role === "ceo" && body.payTreatment && ["full_paid", "half_pay", "unpaid"].includes(body.payTreatment)) {
         finalPayTreatment = body.payTreatment;
       }
     }
     const ceoNotes = body.notes ? String(body.notes).slice(0, 500) : null;
-
     const employeeUser = db.prepare("SELECT u.id, u.email FROM employees e JOIN users u ON u.id = e.user_id WHERE e.id = ?").get(request.employee_id);
     withTransaction(() => {
       db.prepare(`
@@ -1499,27 +1481,13 @@ async function route(req, res, context, body, url) {
         SET status = ?, pay_treatment = ?, ceo_decision_notes = ?, reviewed_by = ?, reviewed_at = ?
         WHERE id = ? AND status = 'pending'
       `).run(decision, finalPayTreatment, ceoNotes, user.user_id, timestamp(), request.id);
-
       db.prepare("INSERT INTO leave_approvals(leave_request_id, reviewer_user_id, decision, reason) VALUES (?, ?, ?, ?)")
         .run(request.id, user.user_id, decision, reason || ceoNotes);
-
-      // If approved, update leave_balances
-      if (decision === "approved") {
-        const year = Number(request.start_date.slice(0, 4));
-        const daysToCount = finalPayTreatment === "half_pay" ? (request.working_days_count * 0.5) : request.working_days_count;
-        db.prepare(`
-          INSERT INTO leave_balances(employee_id, leave_type_id, period_year, entitled_days, used_days)
-          VALUES (?, ?, ?, 25, ?)
-          ON CONFLICT(employee_id, leave_type_id, period_year) DO UPDATE SET used_days = used_days + ?
-        `).run(request.employee_id, request.leave_type_id, year, daysToCount, daysToCount);
-      }
-
       const treatmentLabel = finalPayTreatment === "half_pay"
         ? " (Approved at 50% Half Pay)"
         : finalPayTreatment === "full_paid"
-        ? " (Approved as 100% Paid Leave)"
-        : "";
-
+          ? " (Approved as 100% Paid Leave)"
+          : " (Approved as Unpaid Leave)";
       notifyUser(employeeUser.id, "leave", `Leave request ${decision}`, decision === "approved"
         ? `Your leave request was approved${treatmentLabel}.`
         : `Your leave request was not approved. ${reason}`);
