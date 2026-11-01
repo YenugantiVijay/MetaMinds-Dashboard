@@ -6,6 +6,8 @@ import {
   hashPassword,
   localDateTimeToUtc,
   makeCompanyEmployeeId,
+  isSecondSaturday,
+  isCompanyHoliday,
   verifyPassword,
   workedMinutes,
 } from "../src/domain.mjs";
@@ -15,6 +17,23 @@ test("approved employee IDs include the company year and compact sequence", () =
   assert.equal(makeCompanyEmployeeId(2026, 12), "MM-2026-0012");
   assert.throws(() => makeCompanyEmployeeId(99, 1), /year/);
   assert.throws(() => makeCompanyEmployeeId(2026, 0), /positive/);
+});
+
+test("employee ID sequences are positive, numeric, and zero-padded", () => {
+  assert.equal(makeCompanyEmployeeId(2026, "7"), "MM-2026-0007");
+  assert.equal(makeCompanyEmployeeId(2026, 9999), "MM-2026-9999");
+  assert.throws(() => makeCompanyEmployeeId(2026, "0000"), /positive/);
+  assert.throws(() => makeCompanyEmployeeId(2026, "1A"), /positive/);
+  assert.throws(() => makeCompanyEmployeeId(2026, 10000), /positive/);
+});
+
+test("company working calendar consistently excludes Sundays, second Saturdays, and holidays", () => {
+  assert.equal(isSecondSaturday("2026-11-14"), true);
+  assert.equal(isSecondSaturday("2026-11-07"), false);
+  assert.equal(isCompanyHoliday("2026-11-14"), true);
+  assert.equal(isCompanyHoliday("2026-11-07"), false);
+  assert.equal(isCompanyHoliday("2026-11-08"), true);
+  assert.equal(isCompanyHoliday("2026-11-09", new Set(["2026-11-09"])), true);
 });
 
 test("application OTPs are six-character alphanumeric codes containing a letter and a number", () => {
