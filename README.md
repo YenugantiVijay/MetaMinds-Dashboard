@@ -28,10 +28,10 @@ This build covers the main onboarding and basic people workflows; it does **not*
 
 - The existing PHP registration workflow was unreachable, so integration with its database and login system remains unverified.
 - Storage is local SQLite via Node's `node:sqlite` module. It is suitable for a single-instance development setup, not a multi-instance HR production deployment. A reviewed MySQL adapter and a data migration plan are still required.
-- Identity document uploads are intentionally not accepted. Private document downloads, emergency contacts, and referral records are not exposed in the UI.
+- The current registration UI collects educational certificates and PAN/Aadhaar images as data URLs and stores them in application records. This is not production-safe; do not collect real identity documents until necessity, consent, secure private storage, access controls, retention/deletion, and applicable Indian privacy obligations have been reviewed. Private document downloads, emergency contacts, and referral records are not implemented.
 - Leave balances/entitlements, configurable working-day calendars for leave, and transactional balance adjustments still need company-approved policy.
 - Attendance correction requests, permission requests/reviews for an absence exception, configurable weekly-off calendars, and holiday administration are not yet available in the UI. Sunday is currently treated as the weekly off.
-- Payroll is deliberately disabled. Salary policies, payable-day rules, deductions, tax treatment, and effective dates must be supplied and reviewed before implementation; no net pay is fabricated.
+- Payroll API reads, generation, and disbursement are explicitly blocked with HTTP 503 until company-approved salary structures, payable-day rules, statutory deductions, tax treatment, and effective dates are configured and reviewed. No net pay should be treated as valid.
 - The email outbox runs in the API process. Configure and test a production mail provider, reliable job processing, delivery monitoring, and backup/restore before use.
 - Demo/production seed data is not inserted by default. Synthetic chart samples are explicitly labeled, and KPI counts remain database-derived. The guarded demo seeder is for local development only.
 - Employee role assignment is CEO-controlled through team assignment, but a general roles/permissions editor and account deactivation workflow are not yet available.
@@ -60,7 +60,7 @@ npm run setup:demo
 Remove-Item Env:DEMO_SETUP_ENABLED
 ```
 
-The command creates local demo accounts for `demo.ceo@metaminds.local` and `demo.lead@metaminds.local`, prints newly generated passwords once, and leaves existing demo accounts unchanged. The Team Lead is assigned a demo team and employee ID. The command is unavailable when `NODE_ENV=production`. Both accounts have privileged access; never expose them to production. The development frontend is at `http://localhost:5173`.
+The command creates local demo accounts for `demo.ceo@metaminds.local` and `demo.lead@metaminds.local`, prints newly generated passwords once, and leaves existing demo accounts unchanged. The Team Lead is assigned a demo team and employee ID. The command is unavailable when `NODE_ENV=production`. Both accounts have privileged access; never expose them to production. The in-app demo sign-in shortcut currently supports only the CEO account. The development frontend is at `http://localhost:5173`.
 
 To run the API and production frontend after building:
 
