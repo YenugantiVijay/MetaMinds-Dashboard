@@ -439,20 +439,37 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(checkedOut.status, 200);
 
   assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
+  const paidLeaveAttempt = await request("/api/leave", {
+    jar: employeeJar,
+    csrf: employeeCsrf,
+    method: "POST",
+    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic paid leave policy test" },
+  });
+  assert.equal(paidLeaveAttempt.status, 503);
+
+  const unpaidType = await request("/api/leave-types", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { name: "Synthetic Unpaid Leave", paid: false },
+  });
+  assert.equal(unpaidType.status, 201);
+  const unpaidLeaveTypeId = adminDb.prepare("SELECT id FROM leave_types WHERE name = ?").get("Synthetic Unpaid Leave").id;
   const leave = await request("/api/leave", {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic test request" },
+    body: { leaveTypeId: unpaidLeaveTypeId, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic unpaid leave test" },
   });
-  assert.equal(leave.status, 503);
+  assert.equal(leave.status, 201);
+  assert.equal(leave.payload.payTreatment, "unpaid");
   const ownApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(ownApproval.status, 403);
 
   const ceoLeaveApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: adminJar, csrf: adminCsrf, method: "POST", body: {} });
   assert.equal(ceoLeaveApproval.status, 200);
-  const approvedLeave = adminDb.prepare("SELECT status FROM leave_requests WHERE id = ?").get(leave.payload.id);
+  assert.equal(ceoLeaveApproval.payload.payTreatment, "unpaid");
+  const approvedLeave = adminDb.prepare("SELECT status, pay_treatment FROM leave_requests WHERE id = ?").get(leave.payload.id);
   assert.equal(approvedLeave.status, "approved");
+  assert.equal(approvedLeave.pay_treatment, "unpaid");
 
   const missingResetEmail = await request("/api/auth/password-reset/request", {
     jar: employeeJar,
