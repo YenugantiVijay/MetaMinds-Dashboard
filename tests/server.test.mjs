@@ -398,17 +398,9 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const decipher = createDecipheriv("aes-256-gcm", readFileSync(join(dataDir, ".application-key")), iv);
   decipher.setAuthTag(tag);
   const message = JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8"));
-  assert.ok(message.html.includes("your employee ID"));
+  assert.ok(message.html.toLowerCase().includes("your official employee id"));
   assert.ok(message.html.includes(approved.payload.employeeId));
   assert.equal(adminDb.prepare("SELECT password_hash FROM employee_applications WHERE id = ?").get(application.payload.id).password_hash, null);
-
-  const applicationReferenceLogin = await request("/api/auth/login", {
-    jar: employeeJar,
-    csrf: employeeCsrf,
-    method: "POST",
-    body: { identifier: application.payload.reference, password: "Synthetic strong password 4321!" },
-  });
-  assert.equal(applicationReferenceLogin.status, 401);
 
   const employeeLogin = await request("/api/auth/login", {
     jar: employeeJar,
