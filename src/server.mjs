@@ -1091,34 +1091,23 @@ async function route(req, res, context, body, url) {
       status: 200,
       body: {
         enabled: !isProduction,
-        accounts: [
-          {
-            role: "ceo",
-            title: "CEO & Executive Portal",
-            email: DEMO_CREDENTIALS.ceo.email,
-            password: DEMO_CREDENTIALS.ceo.password,
-            badge: "Executive Leadership",
-            description: "Workforce metrics, employee approvals, audit trails, and company policies",
-          },
-          {
-            role: "employee",
-            title: "Employee Portal",
-            email: DEMO_CREDENTIALS.employee.email,
-            employeeId: DEMO_CREDENTIALS.employee.employeeId,
-            password: DEMO_CREDENTIALS.employee.password,
-            badge: "Staff Member",
-            description: "Personal check-in / check-out, leave requests, attendance history, and team directory",
-          },
-        ],
+        accounts: [{
+          role: "ceo",
+          title: "CEO & Executive Portal",
+          email: DEMO_CREDENTIALS.ceo.email,
+          password: DEMO_CREDENTIALS.ceo.password,
+          badge: "Executive Leadership",
+          description: "Workforce metrics, employee approvals, audit trails, and company policies",
+        }],
       },
     };
   }
   if (method === "POST" && path === "/api/auth/demo-login") {
     if (isProduction) fail(403, "Demo sign in is not available in production.");
-    const role = body.role === "ceo" ? "ceo" : body.role === "employee" ? "employee" : null;
-    if (!role) fail(400, "Valid demo role ('ceo' or 'employee') is required.");
+    const role = body.role === "ceo" ? "ceo" : null;
+    if (!role) fail(400, "Valid demo role ('ceo') is required.");
     ensureDemoAccounts();
-    const targetEmail = role === "ceo" ? DEMO_CREDENTIALS.ceo.email : DEMO_CREDENTIALS.employee.email;
+    const targetEmail = DEMO_CREDENTIALS.ceo.email;
     const user = db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE AND active = 1").get(targetEmail);
     if (!user) fail(500, "Demo account could not be initialized.");
     if (context.jar.mm_session) db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash(context.jar.mm_session));
@@ -1669,6 +1658,9 @@ async function route(req, res, context, body, url) {
     const result = db.prepare("UPDATE email_outbox SET status = 'pending', attempts = 0, last_error = NULL WHERE status = 'failed'").run();
     audit(user.user_id, "email.failed_messages_retried", "email_outbox", result.changes);
     return { status: 200, body: { queued: result.changes } };
+  }
+  if (path === "/api/payroll" || path === "/api/payroll/runs/generate" || path === "/api/payroll/runs/disburse") {
+    fail(503, "Payroll is disabled until company-approved salary, attendance, statutory deduction, and disbursement policies are configured and reviewed.");
   }
   if (method === "GET" && path === "/api/payroll") {
     const user = requireUser(context);
