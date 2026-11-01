@@ -369,6 +369,8 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(approved.payload.emailQueued, true);
   const provisioned = adminDb.prepare("SELECT id, active FROM users WHERE email = ?").get("applicant@example.test");
   assert.equal(provisioned.active, 1);
+  assert.equal(adminDb.prepare("SELECT COUNT(*) AS count FROM salary_structures WHERE employee_id = (SELECT id FROM employees WHERE user_id = ?)").get(provisioned.id).count, 0);
+  assert.equal(adminDb.prepare("SELECT COUNT(*) AS count FROM leave_balances WHERE employee_id = (SELECT id FROM employees WHERE user_id = ?)").get(provisioned.id).count, 0);
   const duplicateApproval = await request(`/api/applications/${application.payload.id}/approve`, {
     jar: adminJar,
     csrf: adminCsrf,
@@ -436,13 +438,14 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const checkedOut = await request("/api/attendance/check-out", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(checkedOut.status, 200);
 
+  assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
   const leave = await request("/api/leave", {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
     body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic test request" },
   });
-  assert.equal(leave.status, 201);
+  assert.equal(leave.status, 503);
   const ownApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(ownApproval.status, 403);
 
