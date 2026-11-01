@@ -3166,363 +3166,34 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
   </div>;
 }
 
-function PayrollPage({ notify }: { notify: (message: string, kind?: "success" | "error") => void }) {
-  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
-  const [data, setData] = useState<{
-    period: string;
-    workingDays: number;
-    totalGross: number;
-    totalNet: number;
-    totalDeductions: number;
-    run: {
-      id: number;
-      period: string;
-      status: "draft" | "disbursed";
-      run_date: string;
-      approved_at: string | null;
-      total_gross: number;
-      total_net: number;
-    } | null;
-    items: Array<{
-      id: number;
-      employeeId: string;
-      name: string;
-      position: string;
-      department: string;
-      photoUrl?: string | null;
-      workingDays: number;
-      attendedDays: number;
-      paidLeaveDays: number;
-      halfPayLeaveDays: number;
-      unpaidAbsenceDays: number;
-      payableDays: number;
-      grossSalary: number;
-      basic: number;
-      hra: number;
-      specialAllowance: number;
-      leaveDeduction: number;
-      pf: number;
-      pt: number;
-      tds: number;
-      totalDeductions: number;
-      netSalary: number;
-      status: "draft" | "disbursed";
-    }>;
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [selectedPayslip, setSelectedPayslip] = useState<any | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api<any>(`/api/payroll?period=${period}`);
-      setData(res);
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Failed to load payroll.", "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [period, notify]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function disburse() {
-    if (!window.confirm(`Are you sure you want to finalize and disburse payroll for ${period}? This action records disbursement and sends notifications.`)) {
-      return;
-    }
-    setBusy(true);
-    try {
-      await api("/api/payroll/runs/disburse", {
-        method: "POST",
-        body: JSON.stringify({ period }),
-      });
-      notify(`Payroll disbursed successfully for ${period}.`);
-      await load();
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Failed to disburse payroll.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const isDisbursed = data?.run?.status === "disbursed";
-
+function PayrollPage() {
   return (
     <div className="page-content">
       <PageHeader
-        title="Payroll & Compensation"
-        subtitle="Manage employee salary structures, attendance deductions, statutory contributions, and disbursements."
-        action={
-          <div className="payroll-header-actions">
-            <label className="date-chip month-picker">
-              <CalendarDays size={15} />
-              <input
-                type="month"
-                value={period}
-                onChange={(e) => setPeriod(e.target.value)}
-              />
-            </label>
-            <Button
-              disabled={busy || !data?.items.length || isDisbursed}
-              onClick={disburse}
-            >
-              <FileCheck2 size={16} />
-              {isDisbursed ? "Disbursed" : "Finalize & Disburse"}
-            </Button>
-          </div>
-        }
+        title="Payroll & compensation"
+        subtitle="Payroll calculations and disbursement are unavailable until company-approved compensation and statutory policies are configured."
       />
-
-      <div className="stats-grid">
-        <StatCard
-          label="Total Gross Payroll"
-          value={`₹${(data?.totalGross ?? 0).toLocaleString("en-IN")}`}
-          detail={`${data?.workingDays ?? 0} working days in period`}
-          icon={<FileText size={20} />}
-          tone="tone-blue"
-        />
-        <StatCard
-          label="Net Disbursals"
-          value={`₹${(data?.totalNet ?? 0).toLocaleString("en-IN")}`}
-          detail={isDisbursed ? `Disbursed on ${formatDate(data?.run?.run_date)}` : "Pending CEO payout"}
-          icon={<Check size={20} />}
-          tone="tone-green"
-        />
-        <StatCard
-          label="Total Deductions"
-          value={`₹${(data?.totalDeductions ?? 0).toLocaleString("en-IN")}`}
-          detail="PF + PT + TDS + Unpaid leaves"
-          icon={<ShieldCheck size={20} />}
-          tone="tone-purple"
-        />
-        <StatCard
-          label="Employees on Payroll"
-          value={data?.items.length ?? 0}
-          detail={isDisbursed ? "Status: Disbursed" : "Status: Draft calculation"}
-          icon={<Users size={20} />}
-          tone="tone-amber"
-        />
-      </div>
-
-      <section className="panel table-panel">
+      <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2>Monthly Payroll Register · {period}</h2>
-            <p>Calculated per company policy (8h/day, 25 annual paid leaves, statutory PF/PT/TDS).</p>
+            <h2><CreditCard size={19} style={{ verticalAlign: "middle", marginRight: 8 }} />Payroll is safely disabled</h2>
+            <p>MetaMinds will not estimate salaries, deductions, tax, payable days or payment status.</p>
           </div>
-          <span className={`status-badge ${isDisbursed ? "badge-paid" : "badge-draft"}`}>
-            {isDisbursed ? "Disbursed" : "Draft Calculation"}
-          </span>
+          <span className="status-pill status-inactive">Not configured</span>
         </div>
-
-        {loading ? (
-          <LoadingState />
-        ) : data?.items.length ? (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Position & Dept</th>
-                  <th>Attendance / Leaves</th>
-                  <th>Payable Days</th>
-                  <th>Gross Salary</th>
-                  <th>Deductions</th>
-                  <th>Net Take-Home</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((emp) => (
-                  <tr key={emp.id}>
-                    <td>
-                      <span className="table-person">
-                        <UserAvatar user={{ name: emp.name, photoUrl: emp.photoUrl }} className="tiny-avatar" />
-                        <span>
-                          <strong>{emp.name}</strong>
-                          <small>{emp.employeeId}</small>
-                        </span>
-                      </span>
-                    </td>
-                    <td>
-                      <div>{emp.position}</div>
-                      <small className="table-sub">{emp.department || "General"}</small>
-                    </td>
-                    <td>
-                      <div className="payroll-days-badge">
-                        <span>{emp.attendedDays} worked</span>
-                        {emp.paidLeaveDays > 0 && <small className="text-success"> +{emp.paidLeaveDays} paid lv</small>}
-                        {emp.halfPayLeaveDays > 0 && <small className="text-warning"> +{emp.halfPayLeaveDays} half-pay</small>}
-                        {emp.unpaidAbsenceDays > 0 && <small className="text-danger"> -{emp.unpaidAbsenceDays} unpaid</small>}
-                      </div>
-                    </td>
-                    <td>
-                      <strong>{emp.payableDays}</strong> / {emp.workingDays}
-                    </td>
-                    <td>
-                      <strong>₹{emp.grossSalary.toLocaleString("en-IN")}</strong>
-                    </td>
-                    <td className="text-danger">
-                      -₹{emp.totalDeductions.toLocaleString("en-IN")}
-                    </td>
-                    <td>
-                      <strong className="text-success font-semibold">₹{emp.netSalary.toLocaleString("en-IN")}</strong>
-                    </td>
-                    <td>
-                      <span className={`status-badge ${isDisbursed ? "badge-paid" : "badge-draft"}`}>
-                        {isDisbursed ? "Paid" : "Draft"}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        className="button button-quiet button-sm"
-                        onClick={() => setSelectedPayslip(emp)}
-                      >
-                        <FileText size={14} /> View Payslip
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="notice notice-warning compact-notice">
+          <ShieldCheck size={18} />
+          <div>
+            <strong>Configuration required before payroll can be enabled</strong>
+            <p>Company-approved salary structures, effective dates, attendance and leave treatment, applicable statutory deductions, tax rules, payment reconciliation and audit controls must be implemented and reviewed first.</p>
           </div>
-        ) : (
-          <EmptyState
-            title="No employees eligible for payroll"
-            detail="Approved employee records will appear here for payroll processing."
-            icon={<FileText size={24} />}
-          />
-        )}
+        </div>
+        <div className="empty-state">
+          <div className="empty-icon"><CreditCard size={24} /></div>
+          <strong>No payroll has been calculated or disbursed</strong>
+          <p>This is intentional. No figures on this screen should be treated as an employee pay statement or payment confirmation.</p>
+        </div>
       </section>
-
-      {/* Payslip Modal */}
-      {selectedPayslip && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedPayslip(null);
-          }}
-        >
-          <div className="payslip-modal-card" role="dialog" aria-modal="true">
-            <div className="payslip-modal-header">
-              <div className="payslip-brand">
-                <BrandMark />
-                <span className="payslip-title">CONFIDENTIAL SALARY PAYSLIP</span>
-              </div>
-              <button
-                className="icon-button"
-                onClick={() => setSelectedPayslip(null)}
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="payslip-summary-grid">
-              <div>
-                <small>EMPLOYEE NAME</small>
-                <strong>{selectedPayslip.name}</strong>
-              </div>
-              <div>
-                <small>EMPLOYEE ID</small>
-                <strong>{selectedPayslip.employeeId}</strong>
-              </div>
-              <div>
-                <small>DESIGNATION</small>
-                <strong>{selectedPayslip.position}</strong>
-              </div>
-              <div>
-                <small>DEPARTMENT</small>
-                <strong>{selectedPayslip.department || "General"}</strong>
-              </div>
-              <div>
-                <small>PAY PERIOD</small>
-                <strong>{period}</strong>
-              </div>
-              <div>
-                <small>PAYABLE / WORKING DAYS</small>
-                <strong>{selectedPayslip.payableDays} / {selectedPayslip.workingDays} Days</strong>
-              </div>
-            </div>
-
-            <div className="payslip-breakdown-columns">
-              <div className="payslip-table-box">
-                <h4>EARNINGS</h4>
-                <div className="payslip-row">
-                  <span>Basic Salary (50%)</span>
-                  <strong>₹{selectedPayslip.basic.toLocaleString("en-IN")}</strong>
-                </div>
-                <div className="payslip-row">
-                  <span>House Rent Allowance (HRA 30%)</span>
-                  <strong>₹{selectedPayslip.hra.toLocaleString("en-IN")}</strong>
-                </div>
-                <div className="payslip-row">
-                  <span>Special Allowance (20%)</span>
-                  <strong>₹{selectedPayslip.specialAllowance.toLocaleString("en-IN")}</strong>
-                </div>
-                <div className="payslip-divider" />
-                <div className="payslip-row payslip-subtotal">
-                  <strong>Total Gross Earnings</strong>
-                  <strong>₹{selectedPayslip.grossSalary.toLocaleString("en-IN")}</strong>
-                </div>
-              </div>
-
-              <div className="payslip-table-box">
-                <h4>DEDUCTIONS</h4>
-                <div className="payslip-row">
-                  <span>Provident Fund (PF 12%)</span>
-                  <strong>₹{selectedPayslip.pf.toLocaleString("en-IN")}</strong>
-                </div>
-                <div className="payslip-row">
-                  <span>Professional Tax (PT)</span>
-                  <strong>₹{selectedPayslip.pt.toLocaleString("en-IN")}</strong>
-                </div>
-                <div className="payslip-row">
-                  <span>Tax Deducted at Source (TDS)</span>
-                  <strong>₹{selectedPayslip.tds.toLocaleString("en-IN")}</strong>
-                </div>
-                {selectedPayslip.leaveDeduction > 0 && (
-                  <div className="payslip-row text-danger">
-                    <span>Unpaid Absence / Half-Pay Leave</span>
-                    <strong>₹{selectedPayslip.leaveDeduction.toLocaleString("en-IN")}</strong>
-                  </div>
-                )}
-                <div className="payslip-divider" />
-                <div className="payslip-row payslip-subtotal text-danger">
-                  <strong>Total Deductions</strong>
-                  <strong>₹{selectedPayslip.totalDeductions.toLocaleString("en-IN")}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="payslip-net-banner">
-              <div>
-                <small>NET TAKE-HOME SALARY</small>
-                <div className="payslip-net-amount">
-                  ₹{selectedPayslip.netSalary.toLocaleString("en-IN")}
-                </div>
-              </div>
-              <span className={`status-badge ${isDisbursed ? "badge-paid" : "badge-draft"}`}>
-                {isDisbursed ? "Disbursed / Paid" : "Draft Calculation"}
-              </span>
-            </div>
-
-            <div className="payslip-modal-actions">
-              <Button variant="secondary" onClick={() => setSelectedPayslip(null)}>
-                Close
-              </Button>
-              <Button onClick={() => window.print()}>
-                <Copy size={15} /> Print / Save PDF
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -3926,5 +3597,5 @@ export default function App() {
     );
   }
   if (!user) return publicPage === "register" ? <Register onBack={() => setPublicPage("login")} onSubmitted={(sub) => setSubmission(sub)} /> : resetMode ? <PasswordReset onDone={() => setResetMode(false)} onBack={() => setResetMode(false)} /> : <><Login onLogin={login} onDemoLogin={demoLogin} onRegister={() => setPublicPage("register")} onForgot={() => setResetMode(true)} initialIdentifier={prefilledIdentifier} />{error && <div className="toast toast-error" role="alert">{error}</div>}</>;
-  return <div className="app-shell"><Sidebar user={user} section={section} onNavigate={setSection} onLogout={() => void logout()} onHelp={() => setHelpOpen(true)} onAccount={() => setAccountOpen(true)} open={menuOpen} onClose={() => setMenuOpen(false)} /><main className="main-area"><Topbar user={user} title={sectionTitles[section]} onMenu={() => setMenuOpen(true)} onNotifications={() => setNotificationsOpen(true)} onNavigate={setSection} onAccount={() => setAccountOpen(true)} onLogout={() => void logout()} />{section === "overview" && <Overview user={user} notify={notify} onNavigate={setSection} />}{section === "applications" && user.role === "ceo" && <ApplicationsPage notify={notify} />}{section === "employees" && <DirectoryPage user={user} notify={notify} />}{section === "attendance" && <AttendancePage user={user} notify={notify} />}{section === "leave" && <LeavePage user={user} notify={notify} />}{section === "payroll" && user.role === "ceo" && <PayrollPage notify={notify} />}{section === "settings" && user.role === "ceo" && <SettingsPage notify={notify} />}{section === "audit" && user.role === "ceo" && <AuditPage notify={notify} />}</main>{notificationsOpen && <NotificationsPanel onClose={() => setNotificationsOpen(false)} notify={notify} />}{messagesOpen && <EmailStatusPanel onClose={() => setMessagesOpen(false)} notify={notify} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{accountOpen && <AccountPanel user={user} onClose={() => setAccountOpen(false)} />}{toast && <div className={`toast ${toast.kind === "error" ? "toast-error" : ""}`} role="status">{toast.kind === "error" ? <X size={17} /> : <Check size={17} />}{toast.text}</div>}</div>;
+  return <div className="app-shell"><Sidebar user={user} section={section} onNavigate={setSection} onLogout={() => void logout()} onHelp={() => setHelpOpen(true)} onAccount={() => setAccountOpen(true)} open={menuOpen} onClose={() => setMenuOpen(false)} /><main className="main-area"><Topbar user={user} title={sectionTitles[section]} onMenu={() => setMenuOpen(true)} onNotifications={() => setNotificationsOpen(true)} onNavigate={setSection} onAccount={() => setAccountOpen(true)} onLogout={() => void logout()} />{section === "overview" && <Overview user={user} notify={notify} onNavigate={setSection} />}{section === "applications" && user.role === "ceo" && <ApplicationsPage notify={notify} />}{section === "employees" && <DirectoryPage user={user} notify={notify} />}{section === "attendance" && <AttendancePage user={user} notify={notify} />}{section === "leave" && <LeavePage user={user} notify={notify} />}{section === "payroll" && user.role === "ceo" && <PayrollPage />}{section === "settings" && user.role === "ceo" && <SettingsPage notify={notify} />}{section === "audit" && user.role === "ceo" && <AuditPage notify={notify} />}</main>{notificationsOpen && <NotificationsPanel onClose={() => setNotificationsOpen(false)} notify={notify} />}{messagesOpen && <EmailStatusPanel onClose={() => setMessagesOpen(false)} notify={notify} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{accountOpen && <AccountPanel user={user} onClose={() => setAccountOpen(false)} />}{toast && <div className={`toast ${toast.kind === "error" ? "toast-error" : ""}`} role="status">{toast.kind === "error" ? <X size={17} /> : <Check size={17} />}{toast.text}</div>}</div>;
 }
