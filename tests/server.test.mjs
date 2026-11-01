@@ -138,7 +138,7 @@ function latestPasswordResetToken(recipient) {
   return resetToken;
 }
 
-async function submitVerifiedApplication({ jar, csrf, name, email, employmentType, position }) {
+async function submitVerifiedApplication({ jar, csrf, name, email, employmentType, position, extraFields = {} }) {
   const started = await request("/api/applications/verification/start", {
     jar,
     csrf,
@@ -182,6 +182,7 @@ async function submitVerifiedApplication({ jar, csrf, name, email, employmentTyp
       education: "Synthetic test qualification",
       privacyAcknowledged: true,
       password: "Synthetic strong password 4321!",
+      ...extraFields,
     },
   });
 }
@@ -307,6 +308,18 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   });
   assert.equal(unverifiedApplication.status, 401);
 
+  const documentUploadAttempt = await submitVerifiedApplication({
+    jar: employeeJar,
+    csrf: employeeCsrf,
+    name: "Synthetic Applicant With Document",
+    email: "documents@example.test",
+    employmentType: "employee",
+    position: "QA analyst",
+    extraFields: { panFront: "data:image/png;base64,c3ludGhldGlj" },
+  });
+  assert.equal(documentUploadAttempt.status, 400);
+  assert.match(documentUploadAttempt.payload.error, /not accepted through the public application/i);
+
   const application = await submitVerifiedApplication({
     jar: employeeJar,
     csrf: employeeCsrf,
@@ -367,6 +380,11 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(publicStatus.payload.status, "approved");
   assert.equal(publicStatus.payload.employeeId, approved.payload.employeeId);
   assert.equal(approved.payload.emailQueued, true);
+  const approvedApplications = await request("/api/applications?status=approved", { jar: adminJar });
+  assert.equal(approvedApplications.status, 200);
+  assert.equal(approvedApplications.payload.length, 1);
+  assert.equal("panFront" in approvedApplications.payload[0], false);
+  assert.equal("aadharFront" in approvedApplications.payload[0], false);
   const provisioned = adminDb.prepare("SELECT id, active FROM users WHERE email = ?").get("applicant@example.test");
   assert.equal(provisioned.active, 1);
   assert.equal(adminDb.prepare("SELECT COUNT(*) AS count FROM salary_structures WHERE employee_id = (SELECT id FROM employees WHERE user_id = ?)").get(provisioned.id).count, 0);
