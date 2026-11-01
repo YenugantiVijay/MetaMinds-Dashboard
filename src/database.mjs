@@ -89,6 +89,7 @@ for (const [key, value] of [
   ["scheduled_end", process.env.SCHEDULED_END || "18:00"],
   ["expected_working_minutes", process.env.EXPECTED_WORKING_HOURS ? String(Number(process.env.EXPECTED_WORKING_HOURS) * 60) : "480"],
   ["absence_warning_hours", process.env.ABSENCE_WARNING_HOURS || "3"],
+  ["attendance_policy_confirmed", "false"],
 ]) {
   db.prepare("INSERT OR IGNORE INTO company_settings(key, value) VALUES (?, ?)").run(key, value);
 }
