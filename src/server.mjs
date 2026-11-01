@@ -66,7 +66,8 @@ function timingSafeStringEqual(left, right) {
 }
 
 function timingSafeHashEqual(left, right) {
-  if (!/^[a-f0-9]{64}$/.test(left ?? "") || !/^[a-f0-9]{64}$/.test(right ?? "")) return false;
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  if (!/^[a-f0-9]{64}$/.test(left) || !/^[a-f0-9]{64}$/.test(right)) return false;
   return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
 
