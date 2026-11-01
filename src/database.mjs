@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -8,7 +8,12 @@ import { DatabaseSync } from "node:sqlite";
 const projectDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = resolve(process.env.DATA_DIR || join(homedir(), ".meta-minds-portal"));
 const migrationsDir = join(projectDir, "migrations");
-mkdirSync(dataDir, { recursive: true });
+mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+try {
+  chmodSync(dataDir, 0o700);
+} catch (error) {
+  if (process.platform !== "win32") throw error;
+}
 
 const keyPath = join(dataDir, ".application-key");
 let encryptionKey;
@@ -28,8 +33,25 @@ try {
 
 export { dataDir, encryptionKey };
 
-export const db = new DatabaseSync(join(dataDir, "portal.sqlite"));
+const databasePath = join(dataDir, "portal.sqlite");
+export const db = new DatabaseSync(databasePath);
+for (const protectedPath of [databasePath, join(dataDir, "portal.sqlite-wal"), join(dataDir, "portal.sqlite-shm")]) {
+  if (!existsSync(protectedPath)) continue;
+  try {
+    chmodSync(protectedPath, 0o600);
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+  }
+}
 db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+for (const protectedPath of [join(dataDir, "portal.sqlite-wal"), join(dataDir, "portal.sqlite-shm")]) {
+  if (!existsSync(protectedPath)) continue;
+  try {
+    chmodSync(protectedPath, 0o600);
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+  }
+}
 db.exec(`
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
