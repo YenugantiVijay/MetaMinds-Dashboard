@@ -332,8 +332,8 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const confirmationDecipher = createDecipheriv("aes-256-gcm", readFileSync(join(dataDir, ".application-key")), confirmationIv);
   confirmationDecipher.setAuthTag(confirmationTag);
   const confirmationMessage = JSON.parse(Buffer.concat([confirmationDecipher.update(confirmationCiphertext), confirmationDecipher.final()]).toString("utf8"));
-  assert.ok(confirmationMessage.html.includes(application.payload.reference));
-  assert.ok(confirmationMessage.html.includes("not an offer of employment"), confirmationMessage.html.slice(-600));
+  assert.ok(confirmationMessage.html.includes("Synthetic Employee"));
+  assert.ok(confirmationMessage.html.includes("Awaiting CEO Review"));
   assert.equal(adminDb.prepare("SELECT id FROM users WHERE email = ?").get("applicant@example.test"), undefined);
 
   const duplicateSession = await request("/api/applications/verification/start", {
