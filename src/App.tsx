@@ -2862,7 +2862,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
       setRows(leaveRows);
       setTypes(leaveTypes);
       setLeaveBalance(balanceData);
-      if (!form.leaveTypeId && leaveTypes[0]) setForm((current) => ({ ...current, leaveTypeId: String(leaveTypes[0].id) }));
+      if (!form.leaveTypeId && leaveTypes[0]) setForm((current) => ({ ...current, leaveTypeId: String((leaveTypes.find((type) => !type.paid || balanceData !== null) || leaveTypes[0]).id) }));
     } catch (error) { notify(error instanceof Error ? error.message : "Could not load leave requests.", "error"); }
     finally { setLoading(false); }
   }, [notify]);
@@ -2879,13 +2879,14 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
     } catch (error) { notify(error instanceof Error ? error.message : "Leave request could not be submitted.", "error"); }
   }
 
-  async function decide(id: number, decision: "approve" | "reject", payTreatment?: "full_paid" | "half_pay") {
+  async function decide(id: number, decision: "approve" | "reject", payTreatment?: "full_paid" | "half_pay" | "unpaid") {
     try {
-      await api(`/api/leave/${id}/${decision}`, {
+      const result = await api<{ payTreatment?: "full_paid" | "half_pay" | "unpaid" }>(`/api/leave/${id}/${decision}`, {
         method: "POST",
         body: JSON.stringify(decision === "reject" ? { reason: rejectReason } : { payTreatment })
       });
-      notify(`Leave request ${decision === "approve" ? `approved (${payTreatment === "half_pay" ? "50% Half Pay" : "100% Paid"})` : "rejected"}.`);
+      const treatmentLabel = result.payTreatment === "unpaid" ? "unpaid leave" : result.payTreatment === "half_pay" ? "50% half pay" : "paid leave";
+      notify(decision === "approve" ? `Leave request approved as ${treatmentLabel}.` : "Leave request rejected.");
       setRejectId(null);
       setRejectReason("");
       await load();
@@ -2904,44 +2905,53 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
 
   const canReview = user.role === "ceo" || user.role === "team_lead";
   const requestedWorkingDays = (form.startDate && form.endDate) ? calculateWorkingDaysClient(form.startDate, form.endDate) : 0;
-  const remainingQuota = leaveBalance?.remaining ?? 25;
-  const isExcessRequest = requestedWorkingDays > remainingQuota;
+  const selectedLeaveType = types.find((type) => String(type.id) === form.leaveTypeId);
+  const remainingQuota = leaveBalance?.remaining ?? 0;
+  const isExcessRequest = selectedLeaveType?.paid === 1 && leaveBalance !== null && requestedWorkingDays > remainingQuota;
+  const paidLeavePolicyMissing = selectedLeaveType?.paid === 1 && leaveBalance === null;
   const excessDaysCount = Math.max(0, requestedWorkingDays - remainingQuota);
 
   return <div className="page-content">
     <PageHeader
       title="Leave management"
-      subtitle="Pending leave is not approved leave. Company policy: 25 annual paid leaves, Monday–Saturday working days (2nd Saturday & Indian holidays off)."
+      subtitle="Pending leave is not approved leave. Paid leave requires an approved company entitlement; Sundays, second Saturdays and configured holidays are excluded from working-day counts."
       action={user.role === "employee" ? <span className="count-chip">{rows.filter((row) => row.status === "pending").length} pending</span> : undefined}
     />
 
     {user.role === "employee" && (
-      <div className="leave-quota-banner">
-        <div className="quota-metric-card">
-          <span className="quota-metric-label">Annual Paid Leaves</span>
-          <strong className="quota-metric-val">25</strong>
-          <span className="quota-metric-sub">Company standard quota</span>
-        </div>
-        <div className="quota-metric-card">
-          <span className="quota-metric-label">Paid Leaves Used</span>
-          <strong className="quota-metric-val">{leaveBalance?.used ?? 0}</strong>
-          <span className="quota-metric-sub">Approved this year</span>
-        </div>
-        <div className="quota-metric-card highlight-metric">
-          <span className="quota-metric-label">Remaining Balance</span>
-          <strong className="quota-metric-val">{leaveBalance?.remaining ?? 25}</strong>
-          <span className="quota-metric-sub">{leaveBalance?.remaining ? "Available without CEO review" : "Exhausted (Needs CEO approval)"}</span>
-        </div>
-        <div className="quota-policy-card">
-          <div className="quota-policy-header">
-            <ShieldCheck size={16} />
-            <strong>Company Work & Leave Rules</strong>
+      leaveBalance ? (
+        <div className="leave-quota-banner">
+          <div className="quota-metric-card">
+            <span className="quota-metric-label">Annual Paid Leaves</span>
+            <strong className="quota-metric-val">{leaveBalance.entitled}</strong>
+            <span className="quota-metric-sub">Configured company entitlement</span>
           </div>
-          <p>• <strong>8 hours/day</strong> standard workday · Mon–Sat working days</p>
-          <p>• <strong>2nd Saturday</strong> of each month & Indian Gazetted Holidays are off</p>
-          <p>• <strong>25 Paid Leaves</strong> quota. Additional leaves require CEO approval (50% Half Pay by default; CEO considers 100% Paid Leave for important/critical reasons)</p>
+          <div className="quota-metric-card">
+            <span className="quota-metric-label">Paid Leaves Used</span>
+            <strong className="quota-metric-val">{leaveBalance.used}</strong>
+            <span className="quota-metric-sub">Approved this year</span>
+          </div>
+          <div className="quota-metric-card highlight-metric">
+            <span className="quota-metric-label">Remaining Balance</span>
+            <strong className="quota-metric-val">{leaveBalance.remaining}</strong>
+            <span className="quota-metric-sub">{leaveBalance.remaining > 0 ? "Within configured entitlement" : "CEO review may be required"}</span>
+          </div>
+          <div className="quota-policy-card">
+            <div className="quota-policy-header">
+              <ShieldCheck size={16} />
+              <strong>Company Work & Leave Rules</strong>
+            </div>
+            <p>• <strong>8 hours/day</strong> standard workday · Monday–Saturday schedule</p>
+            <p>• <strong>Second Saturdays</strong> and configured company holidays are non-working days</p>
+            <p>• Requests beyond the configured paid-leave entitlement require CEO review; pay treatment is decided during review</p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="notice notice-warning">
+          <CircleHelp size={17} />
+          <span>Annual paid-leave entitlement has not been configured by the company. Paid leave requests are temporarily unavailable; unpaid leave requests remain available.</span>
+        </div>
+      )
     )}
 
     {user.role === "ceo" && (
@@ -2973,7 +2983,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
               Leave type
               <select required value={form.leaveTypeId} onChange={(event) => setForm({ ...form, leaveTypeId: event.target.value })}>
                 <option value="">Select a type</option>
-                {types.map((type) => <option value={type.id} key={type.id}>{type.name}{type.paid ? " · paid" : ""}</option>)}
+                {types.map((type) => <option value={type.id} key={type.id} disabled={Boolean(type.paid && !leaveBalance)}>{type.name}{type.paid ? " · paid" : " · unpaid"}</option>)}
               </select>
             </label>
             <label>
@@ -3002,14 +3012,19 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
               </div>
             )}
 
+            {paidLeavePolicyMissing && (
+              <div className="notice notice-warning">
+                <CircleHelp size={17} />
+                <span>Paid leave cannot be submitted until the company configures its approved annual entitlement. Select an unpaid leave type to continue.</span>
+              </div>
+            )}
             {isExcessRequest && (
               <div className="notice notice-warning excess-leave-alert">
                 <ShieldCheck size={18} />
                 <div>
-                  <strong>Excess Leave Notice: CEO Approval Required</strong>
+                  <strong>Additional paid leave requires CEO approval</strong>
                   <p>
-                    This request of <strong>{requestedWorkingDays} working day(s)</strong> exceeds your remaining quota of <strong>{remainingQuota} day(s)</strong> by <strong>{excessDaysCount} day(s)</strong>.
-                    It will be routed directly to the CEO asking for <strong>Half Payment (50% pay)</strong> by default. If your reason is considered reasonable and important, the CEO may approve it as <strong>100% Paid Leave</strong>.
+                    This request of <strong>{requestedWorkingDays} working day(s)</strong> exceeds the remaining configured entitlement of <strong>{remainingQuota} day(s)</strong> by <strong>{excessDaysCount} day(s)</strong>. The CEO will decide the applicable pay treatment during review.
                   </p>
                 </div>
               </div>
@@ -3020,7 +3035,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
               <textarea required minLength={3} maxLength={1000} rows={3} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
             </label>
             <div className="full-width form-actions">
-              <Button type="submit"><CalendarDays size={16} /> Submit request</Button>
+              <Button type="submit" disabled={Boolean(paidLeavePolicyMissing)}><CalendarDays size={16} /> Submit request</Button>
             </div>
           </form>
         ) : (
@@ -3037,7 +3052,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
         <div className="panel-heading panel-heading-padded">
           <div>
             <h2>Request history</h2>
-            <p>{rows.length} request(s) · Company rule: 25 paid leave quota, excess requires CEO approval</p>
+            <p>{rows.length} request(s) · Paid leave treatment follows the configured company policy</p>
           </div>
         </div>
         <div className="table-scroll">
@@ -3068,6 +3083,8 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
                     {row.status === "approved" ? (
                       row.payTreatment === "half_pay" ? (
                         <span className="treatment-badge badge-half">50% Half Pay</span>
+                      ) : row.payTreatment === "unpaid" ? (
+                        <span className="treatment-badge badge-ceo">Unpaid Leave</span>
                       ) : (
                         <span className="treatment-badge badge-full">100% Paid</span>
                       )
@@ -3087,16 +3104,23 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
                               <Button
                                 variant="primary"
                                 onClick={() => void decide(row.id, "approve", "full_paid")}
-                                title="Approve 100% Paid Leave (CEO considered reason reasonable and important)"
+                                title="Approve 100% paid leave"
                               >
                                 <Check size={14} /> 100% Paid Leave
                               </Button>
                               <Button
                                 variant="secondary"
                                 onClick={() => void decide(row.id, "approve", "half_pay")}
-                                title="Approve 50% Half Pay (Standard policy for excess leave)"
+                                title="Approve at 50% half pay"
                               >
                                 <Check size={14} /> 50% Half Pay
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                onClick={() => void decide(row.id, "approve", "unpaid")}
+                                title="Approve as unpaid leave"
+                              >
+                                <Check size={14} /> Unpaid Leave
                               </Button>
                               <Button
                                 variant="danger"
@@ -3113,7 +3137,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
                           )
                         ) : (
                           row.requiresCeoApproval ? (
-                            <span className="badge-warning-text">Escalated to CEO (Exceeds 25-day limit)</span>
+                            <span className="badge-warning-text">Escalated to CEO (exceeds paid-leave entitlement)</span>
                           ) : (
                             <div className="row-actions">
                               <Button variant="quiet" onClick={() => void decide(row.id, "approve", "full_paid")}><Check size={14} /> Approve</Button>
