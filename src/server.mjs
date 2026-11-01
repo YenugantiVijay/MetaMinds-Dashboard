@@ -1448,7 +1448,7 @@ async function route(req, res, context, body, url) {
       FROM leave_requests lr JOIN leave_types lt ON lt.id = lr.leave_type_id WHERE lr.employee_id = ? ORDER BY lr.id DESC
     `).all(employee.id) };
   }
-  const leaveAction = path.match(/^\\/api\\/leave\\/(\\d+)\\/(approve|reject)$/);
+  const leaveAction = path.match(/^\/api\/leave\/(\d+)\/(approve|reject)$/);
   if (method === "POST" && leaveAction) {
     const user = requireUser(context);
     requireRole(user, "ceo", "team_lead");
