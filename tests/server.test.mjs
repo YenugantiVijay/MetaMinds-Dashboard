@@ -269,7 +269,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(ceoDashboard.payload.settings.scheduled_end, "18:00");
   assert.equal(ceoDashboard.payload.settings.expected_working_minutes, "480");
   assert.ok(Array.isArray(ceoDashboard.payload.attendanceReport));
-  assert.ok(ceoDashboard.payload.attendanceReport.length > 300);
+  assert.ok(ceoDashboard.payload.attendanceReport.length > 20 && ceoDashboard.payload.attendanceReport.length <= 31);
   assert.equal(login.payload.user.photoUrl, null);
 
   const leaveType = await request("/api/leave-types", {
