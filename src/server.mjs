@@ -1886,7 +1886,11 @@ function serveStatic(req, res, pathname) {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Frontend build not found. Run npm run build.");
     return;
   }
-  let target = resolve(dist, `.${decodeURIComponent(pathname)}`);
+  const decodedPathname = decodeURIComponent(pathname);
+  // The site root must resolve to the SPA entry point, not the dist directory.
+  let target = decodedPathname === "/"
+    ? resolve(dist, "index.html")
+    : resolve(dist, `.${decodedPathname}`);
   if (!target.startsWith(`${dist}${sep}`) && target !== resolve(dist, "index.html")) {
     res.writeHead(403).end("Forbidden");
     return;
