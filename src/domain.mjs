@@ -22,7 +22,7 @@ export function makeCompanyEmployeeId(year, code) {
     codeStr = generateNonZero4Digits();
   } else {
     const suppliedCode = String(code).trim();
-    if (!/^\\d{1,4}$/.test(suppliedCode) || Number(suppliedCode) <= 0) {
+    if (!/^\d{1,4}$/.test(suppliedCode) || Number(suppliedCode) <= 0) {
       throw new Error("Employee ID sequence must be a positive integer from 1 to 9999.");
     }
     codeStr = suppliedCode.padStart(4, "0");
