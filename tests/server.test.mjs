@@ -326,7 +326,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(applicationRow.phone_verified_at, null);
   assert.equal(application.payload.confirmationEmailQueued, true);
   // Delivery is asynchronous; verify the encrypted outbox record below instead of racing the mock SMTP server.
-  const confirmationOutbox = adminDb.prepare("SELECT encrypted_payload FROM email_outbox WHERE recipient = ? AND subject LIKE '%Application received%' ORDER BY id DESC LIMIT 1").get("applicant@example.test");
+  const confirmationOutbox = adminDb.prepare("SELECT encrypted_payload FROM email_outbox WHERE recipient = ? ORDER BY id DESC LIMIT 1").get("applicant@example.test");
   assert.ok(confirmationOutbox);
   const [confirmationIv, confirmationTag, confirmationCiphertext] = confirmationOutbox.encrypted_payload.split(".").map((value) => Buffer.from(value, "base64url"));
   const confirmationDecipher = createDecipheriv("aes-256-gcm", readFileSync(join(dataDir, ".application-key")), confirmationIv);
