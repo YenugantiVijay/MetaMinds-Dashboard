@@ -1501,6 +1501,40 @@ async function route(req, res, context, body, url) {
     });
     return { status: 200, body: { ok: true, status: decision, payTreatment: finalPayTreatment } };
   }
+  if (method === "GET" && path === "/api/company-holidays") {
+    requireUser(context);
+    return {
+      status: 200,
+      body: db.prepare("SELECT id, holiday_date AS holidayDate, name FROM company_holidays ORDER BY holiday_date").all(),
+    };
+  }
+  if (method === "POST" && path === "/api/company-holidays") {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const holidayDate = validDate(body.date, "Holiday date");
+    if (holidayDate < currentDateInZone()) fail(400, "New company holidays must be today or a future date.");
+    const name = requiredString(body.name, "Holiday name", 120, 2);
+    if (db.prepare("SELECT 1 FROM company_holidays WHERE holiday_date = ?").get(holidayDate)) {
+      fail(409, "A company holiday already exists on that date.");
+    }
+    const result = db.prepare("INSERT INTO company_holidays(holiday_date, name) VALUES (?, ?)").run(holidayDate, name);
+    audit(user.user_id, "company_holiday.created", "company_holiday", result.lastInsertRowid);
+    return { status: 201, body: { id: Number(result.lastInsertRowid), holidayDate, name } };
+  }
+  if (method === "POST" && path === "/api/company-holidays/remove") {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const id = Number(body.id);
+    if (!Number.isInteger(id) || id <= 0) fail(400, "A valid holiday ID is required.");
+    const holiday = db.prepare("SELECT id, holiday_date, name FROM company_holidays WHERE id = ?").get(id);
+    if (!holiday) fail(404, "Company holiday not found.");
+    if (holiday.holiday_date <= currentDateInZone()) fail(409, "Past and current company holidays cannot be removed.");
+    withTransaction(() => {
+      db.prepare("DELETE FROM company_holidays WHERE id = ?").run(id);
+      audit(user.user_id, "company_holiday.removed", "company_holiday", id);
+    });
+    return { status: 200, body: { ok: true } };
+  }
   if (method === "GET" && path === "/api/leave-types") {
     requireUser(context);
     return { status: 200, body: db.prepare("SELECT id, name, paid FROM leave_types WHERE active = 1 ORDER BY name").all() };
