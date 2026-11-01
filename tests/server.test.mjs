@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer as createTcpServer } from "node:net";
 import { spawn } from "node:child_process";
 import { createDecipheriv } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -237,6 +237,11 @@ before(async () => {
   assert.equal(missingAssetResponse.status, 404, "Missing static assets must not receive index.html.");
 
   adminDb = new DatabaseSync(join(dataDir, "portal.sqlite"));
+  if (process.platform !== "win32") {
+    assert.equal(statSync(dataDir).mode & 0o077, 0, "Database directory must not be accessible by group or other users.");
+    assert.equal(statSync(join(dataDir, "portal.sqlite")).mode & 0o077, 0, "SQLite database must be private.");
+    assert.equal(statSync(join(dataDir, ".application-key")).mode & 0o077, 0, "Application encryption key must be private.");
+  }
   adminDb.prepare("INSERT INTO email_outbox(recipient, subject, encrypted_payload, status) VALUES (?, ?, ?, 'sending')")
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
