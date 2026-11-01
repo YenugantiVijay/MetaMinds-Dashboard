@@ -25,7 +25,7 @@ const port = Number(process.env.PORT || 3001);
 const appUrl = new URL(process.env.APP_URL || "http://localhost:5173");
 const isProduction = process.env.NODE_ENV === "production";
 if (isProduction && appUrl.protocol !== "https:") throw new Error("Production APP_URL must use HTTPS.");
-const maxBodyBytes = 25 * 1024 * 1024;
+const maxBodyBytes = 5 * 1024 * 1024;
 const sessions = db.prepare(`
   SELECT s.token_hash, s.csrf_hash, s.expires_at, u.id AS user_id, u.email, u.role, u.active,
          e.id AS employee_row_id, e.employee_id, e.full_name, e.employment_type, e.position,
@@ -210,11 +210,16 @@ async function readBody(req) {
     chunks.push(chunk);
   }
   if (!length) return {};
+  let parsed;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     fail(400, "Request body must be valid JSON.");
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    fail(400, "Request body must be a JSON object.");
+  }
+  return parsed;
 }
 
 function requiredString(value, field, maxLength, minLength = 1) {
@@ -1824,7 +1829,14 @@ function serveStatic(req, res, pathname) {
     res.writeHead(403).end("Forbidden");
     return;
   }
-  if (!existsSync(target)) target = resolve(dist, "index.html");
+  if (!existsSync(target)) {
+    const acceptsHtml = (req.headers.accept ?? "").includes("text/html");
+    if (extname(decodedPathname) || !acceptsHtml) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }).end("Not found.");
+      return;
+    }
+    target = resolve(dist, "index.html");
+  }
   const contentType = mimeType(target);
   res.writeHead(200, {
     "Content-Type": contentType,
@@ -1867,7 +1879,7 @@ const server = createServer(async (req, res) => {
     }
     serveStatic(req, res, url.pathname);
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
+    const status = error instanceof HttpError ? error.status : error instanceof URIError ? 400 : 500;
     if (status >= 500) {
       console.error("Request failed", {
         method: req.method,
@@ -1879,7 +1891,7 @@ const server = createServer(async (req, res) => {
     }
     if (res.headersSent) return res.end();
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ error: status === 500 ? (error.message || "The request could not be completed.") : error.message }));
+    res.end(JSON.stringify({ error: status === 500 ? "An unexpected server error occurred. Please try again later." : error instanceof URIError ? "The request path is malformed." : error.message }));
   }
 });
 
