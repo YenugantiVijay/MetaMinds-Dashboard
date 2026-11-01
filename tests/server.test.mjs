@@ -310,6 +310,31 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(settings.status, 200);
   const settingsSnapshot = await request("/api/settings", { jar: adminJar });
   assert.equal(settingsSnapshot.payload.settings.employee_id_prefix, undefined);
+  const holidayList = await request("/api/company-holidays", { jar: adminJar });
+  assert.equal(holidayList.status, 200);
+  assert.ok(holidayList.payload.some((holiday) => holiday.holidayDate === "2026-11-08"));
+  const addedHoliday = await request("/api/company-holidays", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { date: "2026-12-31", name: "Synthetic Company Day" },
+  });
+  assert.equal(addedHoliday.status, 201);
+  const duplicateHoliday = await request("/api/company-holidays", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { date: "2026-12-31", name: "Duplicate Synthetic Day" },
+  });
+  assert.equal(duplicateHoliday.status, 409);
+  const holidayRemoval = await request("/api/company-holidays/remove", {
+    jar: adminJar, csrf: adminCsrf, method: "POST", body: { id: addedHoliday.payload.id },
+  });
+  assert.equal(holidayRemoval.status, 200);
+  const removedHolidayList = await request("/api/company-holidays", { jar: adminJar });
+  assert.equal(removedHolidayList.payload.some((holiday) => holiday.id === addedHoliday.payload.id), false);
+  const pastHoliday = holidayList.payload.find((holiday) => holiday.holidayDate < "2026-11-01");
+  assert.ok(pastHoliday);
+  const pastHolidayRemoval = await request("/api/company-holidays/remove", {
+    jar: adminJar, csrf: adminCsrf, method: "POST", body: { id: pastHoliday.id },
+  });
+  assert.equal(pastHolidayRemoval.status, 409);
 
   const publicSession = await request("/api/auth/me", { jar: employeeJar });
   employeeCsrf = publicSession.payload.csrfToken;
