@@ -99,6 +99,13 @@ function settingsObject() {
   return Object.fromEntries(db.prepare("SELECT key, value FROM company_settings").all().map(({ key, value }) => [key, value]));
 }
 
+function attendancePolicyConfigured(settings = settingsObject()) {
+  return settings.attendance_policy_confirmed === "true" &&
+    Number.isInteger(Number(settings.expected_working_minutes)) &&
+    Number(settings.expected_working_minutes) > 0 &&
+    Number(settings.expected_working_minutes) <= 1440;
+}
+
 function currentDateInZone(zone = getSetting("timezone") || "Asia/Kolkata", date = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
@@ -371,8 +378,9 @@ function makeSession(res, userId) {
 function buildDashboard(user) {
   const settings = settingsObject();
   const today = currentDateInZone(settings.timezone);
-  const expectedMinutes = Number(settings.expected_working_minutes) || null;
-  const chartExpectedMinutes = expectedMinutes ?? 480;
+  const expectedMinutes = attendancePolicyConfigured(settings) ? Number(settings.expected_working_minutes) : null;
+  const chartExpectedMinutes = expectedMinutes ?? 1440;
+  const attendancePercentMinutes = expectedMinutes ?? 0;
   if (user.role === "ceo") {
     return {
       role: user.role,
@@ -463,7 +471,7 @@ function buildDashboard(user) {
           AND NOT (strftime('%w', calendar.day) = '6' AND CAST(strftime('%d', calendar.day) AS INTEGER) BETWEEN 8 AND 14)
           AND NOT EXISTS (SELECT 1 FROM company_holidays h WHERE h.holiday_date = calendar.day)
         ORDER BY calendar.day
-      `).all(today, today, chartExpectedMinutes, chartExpectedMinutes, chartExpectedMinutes),
+      `).all(today, today, attendancePercentMinutes, attendancePercentMinutes, attendancePercentMinutes),
       departmentDistribution: db.prepare(`
         SELECT COALESCE(d.name, 'Unassigned') AS name, COUNT(*) AS count
         FROM employees e JOIN users u ON u.id = e.user_id
@@ -928,6 +936,7 @@ function rejectApplication(user, applicationId, reason) {
 
 function runAttendanceExceptions() {
   const settings = settingsObject();
+  if (!attendancePolicyConfigured(settings)) return;
   const zone = settings.timezone || "Asia/Kolkata";
   const today = currentDateInZone(zone);
   const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
@@ -1273,7 +1282,7 @@ async function route(req, res, context, body, url) {
     return { status: 200, body: {
       timezone: settings.timezone,
       today: currentDateInZone(settings.timezone),
-      expectedWorkingMinutes: Number(settings.expected_working_minutes) || null,
+      expectedWorkingMinutes: attendancePolicyConfigured(settings) ? Number(settings.expected_working_minutes) : null,
       scheduledStart: settings.scheduled_start,
       scheduledEnd: settings.scheduled_end,
       absenceWarningHours: Number(settings.absence_warning_hours),
@@ -1615,7 +1624,7 @@ async function route(req, res, context, body, url) {
   if (method === "POST" && path === "/api/settings") {
     const user = requireUser(context);
     requireRole(user, "ceo");
-    const allowed = new Set(["timezone", "scheduled_start", "scheduled_end", "expected_working_minutes", "absence_warning_hours"]);
+    const allowed = new Set(["timezone", "scheduled_start", "scheduled_end", "expected_working_minutes", "absence_warning_hours", "attendance_policy_confirmed"]);
     withTransaction(() => {
     for (const [key, value] of Object.entries(body)) {
       if (!allowed.has(key) || typeof value !== "string") fail(400, "Settings contain an unsupported or invalid value.");
@@ -1632,9 +1641,25 @@ async function route(req, res, context, body, url) {
         fail(400, "Expected paid working time must be 1-1440 minutes, or blank until configured.");
       } else if (key === "absence_warning_hours" && (!/^\d+$/.test(sanitized) || Number(sanitized) < 1 || Number(sanitized) > 24)) {
         fail(400, "Absence warning period must be 1-24 hours.");
+      } else if (key === "attendance_policy_confirmed" && !["true", "false"].includes(sanitized)) {
+        fail(400, "Attendance policy confirmation must be true or false.");
       }
       setSetting(key, sanitized);
     }
+    const confirmed = body.attendance_policy_confirmed === "true";
+    if (confirmed) {
+      const current = settingsObject();
+      const expectedMinutes = Number(current.expected_working_minutes);
+      const startMinutes = Number(current.scheduled_start.slice(0, 2)) * 60 + Number(current.scheduled_start.slice(3, 5));
+      const endMinutes = Number(current.scheduled_end.slice(0, 2)) * 60 + Number(current.scheduled_end.slice(3, 5));
+      if (!Number.isInteger(expectedMinutes) || expectedMinutes < 1 || expectedMinutes > 1440) {
+        fail(400, "Enter the approved expected workday duration before confirming the attendance policy.");
+      }
+      if (endMinutes <= startMinutes) fail(400, "Scheduled end must be later than scheduled start on the same day.");
+    } else {
+      setSetting("expected_working_minutes", "");
+    }
+    setSetting("attendance_policy_confirmed", confirmed ? "true" : "false");
     audit(user.user_id, "company.settings_updated", "company_settings", "attendance_policy");
     });
     return { status: 200, body: { settings: settingsObject() } };
