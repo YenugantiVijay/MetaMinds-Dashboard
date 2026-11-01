@@ -17,9 +17,15 @@ export function makeCompanyEmployeeId(year, code) {
   if (!Number.isInteger(year) || year < 2000 || year > 9999) {
     throw new Error("Employee ID year must be a four-digit year.");
   }
-  let codeStr = code !== undefined ? String(code).trim() : "";
-  if (!/^[1-9]{4}$/.test(codeStr)) {
+  let codeStr;
+  if (code === undefined) {
     codeStr = generateNonZero4Digits();
+  } else {
+    const suppliedCode = String(code).trim();
+    if (!/^\d{1,4}$/.test(suppliedCode) || Number(suppliedCode) <= 0) {
+      throw new Error("Employee ID sequence must be a positive integer from 1 to 9999.");
+    }
+    codeStr = suppliedCode.padStart(4, "0");
   }
   return `MM-${year}-${codeStr}`;
 }
@@ -44,13 +50,83 @@ export function isSecondSaturday(dateStr) {
   return dayOfMonth >= 8 && dayOfMonth <= 14;
 }
 
-export function isCompanyHoliday(dateStr, holidaysSet = new Set()) {
+export function evaluateAttendanceDayPolicy(dateStr, holidaysSource = new Map()) {
+  if (typeof dateStr !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    throw new Error("Date must use YYYY-MM-DD format.");
+  }
   const d = new Date(`${dateStr}T12:00:00Z`);
-  const dayOfWeek = d.getUTCDay();
-  if (dayOfWeek === 0) return true; // Sunday is weekly off
-  if (isSecondSaturday(dateStr)) return true; // 2nd Saturday is holiday
-  if (holidaysSet.has(dateStr)) return true; // Indian public holiday
-  return false;
+  const dayOfWeek = d.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
+  // 1. Sunday check
+  if (dayOfWeek === 0) {
+    return {
+      date: dateStr,
+      isWorkingDay: false,
+      reason: "sunday",
+      holidayName: null,
+      message: "Today is Sunday, a company weekly off. Check-in is unavailable.",
+    };
+  }
+
+  // 2. Second Saturday check
+  if (isSecondSaturday(dateStr)) {
+    return {
+      date: dateStr,
+      isWorkingDay: false,
+      reason: "second_saturday",
+      holidayName: null,
+      message: "Today is the second Saturday, a company weekly off. Check-in is unavailable.",
+    };
+  }
+
+  // 3. Configured company holiday check
+  let holidayName = null;
+  if (holidaysSource instanceof Map) {
+    if (holidaysSource.has(dateStr)) {
+      holidayName = holidaysSource.get(dateStr) || "Company Holiday";
+    }
+  } else if (holidaysSource instanceof Set) {
+    if (holidaysSource.has(dateStr)) {
+      holidayName = "Company Holiday";
+    }
+  } else if (Array.isArray(holidaysSource)) {
+    const match = holidaysSource.find((h) => (h?.holiday_date || h?.holidayDate || h?.date) === dateStr);
+    if (match) {
+      holidayName = match.name || "Company Holiday";
+    }
+  } else if (typeof holidaysSource === "object" && holidaysSource !== null) {
+    if (dateStr in holidaysSource) {
+      holidayName = holidaysSource[dateStr] || "Company Holiday";
+    }
+  }
+
+  if (holidayName !== null) {
+    const holidayLabel = typeof holidayName === "string" && holidayName.trim() ? holidayName.trim() : "";
+    const message = holidayLabel && holidayLabel !== "Company Holiday"
+      ? `Today is a company holiday (${holidayLabel}). Check-in is unavailable.`
+      : "Today is a company holiday. Check-in is unavailable.";
+    return {
+      date: dateStr,
+      isWorkingDay: false,
+      reason: "company_holiday",
+      holidayName: holidayLabel || null,
+      message,
+    };
+  }
+
+  // 4. Scheduled working day (Monday - Friday, 1st, 3rd, 4th, 5th Saturday)
+  return {
+    date: dateStr,
+    isWorkingDay: true,
+    reason: "working_day",
+    holidayName: null,
+    message: "Today is a scheduled working day.",
+  };
+}
+
+export function isCompanyHoliday(dateStr, holidaysSet = new Set()) {
+  const policy = evaluateAttendanceDayPolicy(dateStr, holidaysSet);
+  return !policy.isWorkingDay;
 }
 
 export function countWorkingDays(startDate, endDate, holidaysSet = new Set()) {

@@ -12,8 +12,8 @@ PHP 8.3 and Node.js 26 were present, but Composer, MySQL, and a PHP SQLite drive
 - Server-side authentication with scrypt password hashes, expiring HttpOnly session cookies, CSRF tokens, login throttling, logout, account activation, and one-time password-reset links.
 - Public employee/intern application flow with email-only verification using a six-character alphanumeric OTP, password setup, server validation, duplicate checks, and privacy acknowledgement. Phone numbers are not collected. Passwords are stored as hashes, but applicants cannot sign in before CEO approval.
 - CEO-only application review. Employee records and IDs are created transactionally after approval; an approved applicant can then sign in using the password created during application. Approval and employee ID assignment do not depend on SMTP. If SMTP is unavailable, the decision can still be recorded and the assigned ID is available to the CEO, but email updates are not sent. Applicant access roles cannot be set in the public form.
-- Approval assigns IDs in the `MM-YYYY-NNNN` format using a shared yearly sequence. Application receipt and approval messages use branded HTML and plain-text SMTP templates; applicants receive a copyable reference and a pending-review confirmation.
-- Sign-in accepts a work email or an assigned employee ID (`MM-YYYY-NNNN`); an application reference (`MM-APP-...`) is not a sign-in ID. Password-reset links are sent to the approved account's work email and require configured email delivery.
+- Applicants receive an opaque, high-entropy `MM-APP-...` reference for status checks. A separate collision-checked employee ID in the `MM-YYYY-NNNN` format is assigned only after CEO approval. Application receipt and approval messages use branded HTML and plain-text SMTP templates.
+- Sign-in accepts a work email or an assigned employee ID (`MM-YYYY-NNNN`). Application references are not sign-in credentials. Password-reset links are sent to the approved account's work email and require configured email delivery.
 - Private SQLite database and versioned SQL migrations. Activation/reset email bodies are encrypted in the outbox; SMTP delivery is attempted only when configured and delivery state is tracked.
 - Employee directory, CEO-controlled team and Team Lead assignment, server-timestamped check-in/check-out, attendance history, hourly attendance reminders, absence-warning exceptions, and leave request/approval records.
 - The initial attendance policy is 10 AM–6 PM, eight expected work hours, Monday–Saturday, with a three-hour manager-review threshold. The CEO can adjust shift times and expected hours; the weekly off is currently Sunday.
@@ -28,10 +28,10 @@ This build covers the main onboarding and basic people workflows; it does **not*
 
 - The existing PHP registration workflow was unreachable, so integration with its database and login system remains unverified.
 - Storage is local SQLite via Node's `node:sqlite` module. It is suitable for a single-instance development setup, not a multi-instance HR production deployment. A reviewed MySQL adapter and a data migration plan are still required.
-- Identity document uploads are intentionally not accepted. Private document downloads, emergency contacts, and referral records are not exposed in the UI.
-- Leave balances/entitlements, configurable working-day calendars for leave, and transactional balance adjustments still need company-approved policy.
+- Public registration no longer accepts education certificates or PAN/Aadhaar uploads, and the CEO applications API no longer returns legacy document fields. Documents stored by older versions may still exist in existing SQLite databases; they are not automatically deleted by this change. Review retention/legal requirements, then perform an authorized secure deletion and backup-retention cleanup before production. Any future document collection must use approved private storage, access controls, audit trails, retention/deletion controls, and a reviewed legal basis. Private document downloads, emergency contacts, and referral records are not implemented.
+- Paid leave requests and balances remain blocked until `ANNUAL_PAID_LEAVE_DAYS` is configured from an approved company policy. Unpaid leave requests can still use the approval workflow. The annual entitlement is never guessed or silently defaulted.
 - Attendance correction requests, permission requests/reviews for an absence exception, configurable weekly-off calendars, and holiday administration are not yet available in the UI. Sunday is currently treated as the weekly off.
-- Payroll is deliberately disabled. Salary policies, payable-day rules, deductions, tax treatment, and effective dates must be supplied and reviewed before implementation; no net pay is fabricated.
+- Payroll API reads, generation, and disbursement are explicitly blocked with HTTP 503 until company-approved salary structures, payable-day rules, statutory deductions, tax treatment, and effective dates are configured. Employee onboarding does not fabricate salary components from the discussed salary field.
 - The email outbox runs in the API process. Configure and test a production mail provider, reliable job processing, delivery monitoring, and backup/restore before use.
 - Demo/production seed data is not inserted by default. Synthetic chart samples are explicitly labeled, and KPI counts remain database-derived. The guarded demo seeder is for local development only.
 - Employee role assignment is CEO-controlled through team assignment, but a general roles/permissions editor and account deactivation workflow are not yet available.
@@ -39,7 +39,7 @@ This build covers the main onboarding and basic people workflows; it does **not*
 - Full database encryption at rest, production backup and restore procedures, retention/deletion automation, external security review, and a MySQL deployment have not been completed.
 - Automated coverage currently focuses on core calculations and the registration-to-activation, attendance, leave, authorization, and password-reset workflows. Browser validation was manual; no Playwright suite has been configured.
 
-Do not use real employee identity documents, bank details, or payroll data in this build. Before production use, complete the blockers above, verify applicable Indian privacy/payroll obligations with qualified professionals, deploy behind HTTPS, and obtain an independent security review.
+Do not use real employee identity documents, bank details, or payroll data in this build. Previously uploaded legacy identity documents may remain in existing database files and backups until an authorized retention/deletion process is completed. Before production use, complete the blockers above, verify applicable Indian privacy/payroll obligations with qualified professionals, deploy behind HTTPS, and obtain an independent security review.
 
 ## Setup
 
@@ -60,7 +60,7 @@ npm run setup:demo
 Remove-Item Env:DEMO_SETUP_ENABLED
 ```
 
-The command creates local demo accounts for `demo.ceo@metaminds.local` and `demo.lead@metaminds.local`, prints newly generated passwords once, and leaves existing demo accounts unchanged. The Team Lead is assigned a demo team and employee ID. The command is unavailable when `NODE_ENV=production`. Both accounts have privileged access; never expose them to production. The development frontend is at `http://localhost:5173`.
+The command creates local demo accounts for `demo.ceo@metaminds.local` and `demo.lead@metaminds.local`, prints newly generated passwords once, and leaves existing demo accounts unchanged. The Team Lead is assigned a demo team and employee ID. The command is unavailable when `NODE_ENV=production`. Both accounts have privileged access; never expose them to production. The in-app demo sign-in shortcut currently supports only the CEO account. The development frontend is at `http://localhost:5173`.
 
 To run the API and production frontend after building:
 

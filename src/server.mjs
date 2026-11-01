@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { createReadStream, existsSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
-import { createHash, randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { createHash, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import nodemailer from "nodemailer";
 import { getSmtpConfiguration } from "./smtp-config.mjs";
@@ -10,6 +10,7 @@ import {
   attendanceProgress,
   countWorkingDays,
   createApplicationOtp,
+  evaluateAttendanceDayPolicy,
   hashPassword,
   isCompanyHoliday,
   isSecondSaturday,
@@ -25,7 +26,7 @@ const port = Number(process.env.PORT || 3001);
 const appUrl = new URL(process.env.APP_URL || "http://localhost:5173");
 const isProduction = process.env.NODE_ENV === "production";
 if (isProduction && appUrl.protocol !== "https:") throw new Error("Production APP_URL must use HTTPS.");
-const maxBodyBytes = 25 * 1024 * 1024;
+const maxBodyBytes = 5 * 1024 * 1024;
 const sessions = db.prepare(`
   SELECT s.token_hash, s.csrf_hash, s.expires_at, u.id AS user_id, u.email, u.role, u.active,
          e.id AS employee_row_id, e.employee_id, e.full_name, e.employment_type, e.position,
@@ -58,6 +59,19 @@ function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function timingSafeStringEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function timingSafeHashEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  if (!/^[a-f0-9]{64}$/.test(left) || !/^[a-f0-9]{64}$/.test(right)) return false;
+  return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
+}
+
 function timestamp() {
   return new Date().toISOString();
 }
@@ -86,7 +100,32 @@ function settingsObject() {
   return Object.fromEntries(db.prepare("SELECT key, value FROM company_settings").all().map(({ key, value }) => [key, value]));
 }
 
-function currentDateInZone(zone = getSetting("timezone") || "Asia/Kolkata", date = new Date()) {
+function attendancePolicyConfigured(settings = settingsObject()) {
+  return settings.attendance_policy_confirmed === "true" &&
+    Number.isInteger(Number(settings.expected_working_minutes)) &&
+    Number(settings.expected_working_minutes) > 0 &&
+    Number(settings.expected_working_minutes) <= 1440;
+}
+
+function getCompanyHolidaysMap() {
+  const rows = db.prepare("SELECT holiday_date, name FROM company_holidays").all();
+  const map = new Map();
+  for (const row of rows) {
+    map.set(row.holiday_date, row.name);
+  }
+  return map;
+}
+
+function currentDateInZone(zone = getSetting("timezone") || "Asia/Kolkata", date = new Date(), context) {
+  if (process.env.NODE_ENV !== "production") {
+    const testHeader = context?.headers?.["x-test-date"] || context?.req?.headers?.["x-test-date"];
+    if (testHeader && /^\d{4}-\d{2}-\d{2}$/.test(testHeader)) {
+      return testHeader;
+    }
+    if (process.env.TEST_CURRENT_DATE && /^\d{4}-\d{2}-\d{2}$/.test(process.env.TEST_CURRENT_DATE)) {
+      return process.env.TEST_CURRENT_DATE;
+    }
+  }
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
     year: "numeric",
@@ -131,7 +170,7 @@ function setCookies(res, values) {
 }
 
 function csrfToken(res, cookieJar, session) {
-  if (cookieJar.mm_csrf && (!session || hash(cookieJar.mm_csrf) === session.csrf_hash)) return cookieJar.mm_csrf;
+  if (cookieJar.mm_csrf && (!session || timingSafeHashEqual(hash(cookieJar.mm_csrf), session.csrf_hash))) return cookieJar.mm_csrf;
   const value = randomBytes(32).toString("base64url");
   if (session) db.prepare("UPDATE sessions SET csrf_hash = ? WHERE token_hash = ?").run(hash(value), session.token_hash);
   setCookies(res, [
@@ -175,10 +214,10 @@ function checkCsrf(req, context) {
     fail(403, "A valid request origin is required.");
   }
   const headerToken = req.headers["x-csrf-token"];
-  if (typeof headerToken !== "string" || !context.jar.mm_csrf || headerToken !== context.jar.mm_csrf) {
+  if (typeof headerToken !== "string" || !context.jar.mm_csrf || !timingSafeStringEqual(headerToken, context.jar.mm_csrf)) {
     fail(403, "Your session expired. Refresh the page and try again.");
   }
-  if (context.user && hash(headerToken) !== context.user.csrf_hash) {
+  if (context.user && !timingSafeHashEqual(hash(headerToken), context.user.csrf_hash)) {
     fail(403, "Your session expired. Refresh the page and try again.");
   }
 }
@@ -210,11 +249,16 @@ async function readBody(req) {
     chunks.push(chunk);
   }
   if (!length) return {};
+  let parsed;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     fail(400, "Request body must be valid JSON.");
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    fail(400, "Request body must be a JSON object.");
+  }
+  return parsed;
 }
 
 function requiredString(value, field, maxLength, minLength = 1) {
@@ -350,15 +394,19 @@ function makeSession(res, userId) {
   return { rawSession, csrf };
 }
 
-function buildDashboard(user) {
+function buildDashboard(user, context) {
   const settings = settingsObject();
-  const today = currentDateInZone(settings.timezone);
-  const expectedMinutes = Number(settings.expected_working_minutes) || null;
-  const chartExpectedMinutes = expectedMinutes ?? 480;
+  const today = currentDateInZone(settings.timezone, undefined, context);
+  const holidaysMap = getCompanyHolidaysMap();
+  const attendanceDayPolicy = evaluateAttendanceDayPolicy(today, holidaysMap);
+  const expectedMinutes = attendancePolicyConfigured(settings) ? Number(settings.expected_working_minutes) : null;
+  const chartExpectedMinutes = expectedMinutes ?? 1440;
+  const attendancePercentMinutes = expectedMinutes ?? 0;
   if (user.role === "ceo") {
     return {
       role: user.role,
       today,
+      attendanceDayPolicy,
       settings,
       emailConfigured: smtpConfiguration().configured,
       employees: db.prepare("SELECT COUNT(*) AS value FROM employees e JOIN users u ON u.id = e.user_id WHERE u.active = 1").get().value,
@@ -371,14 +419,14 @@ function buildDashboard(user) {
       attendanceTrend: db.prepare(`
         SELECT attendance_date AS date, COUNT(*) AS present,
           ROUND(AVG(CASE
-            WHEN worked_minutes IS NOT NULL THEN MIN(worked_minutes, ?)
-            WHEN check_out IS NULL THEN MIN(MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER)), ?)
+            WHEN worked_minutes IS NOT NULL THEN worked_minutes
+            WHEN check_out IS NULL THEN MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER))
             ELSE 0
           END), 0) AS averageMinutes
         FROM attendance_records
         WHERE attendance_date >= date(?, '-365 days') AND attendance_date <= ?
         GROUP BY attendance_date ORDER BY attendance_date
-      `).all(chartExpectedMinutes, chartExpectedMinutes, today, today),
+      `).all(today, today),
       attendanceReport: db.prepare(`
         WITH RECURSIVE calendar(day) AS (
           SELECT date(?, '-365 days')
@@ -445,7 +493,7 @@ function buildDashboard(user) {
           AND NOT (strftime('%w', calendar.day) = '6' AND CAST(strftime('%d', calendar.day) AS INTEGER) BETWEEN 8 AND 14)
           AND NOT EXISTS (SELECT 1 FROM company_holidays h WHERE h.holiday_date = calendar.day)
         ORDER BY calendar.day
-      `).all(today, today, chartExpectedMinutes, chartExpectedMinutes, chartExpectedMinutes),
+      `).all(today, today, attendancePercentMinutes, attendancePercentMinutes, attendancePercentMinutes),
       departmentDistribution: db.prepare(`
         SELECT COALESCE(d.name, 'Unassigned') AS name, COUNT(*) AS count
         FROM employees e JOIN users u ON u.id = e.user_id
@@ -489,6 +537,7 @@ function buildDashboard(user) {
     return {
       role: user.role,
       today,
+      attendanceDayPolicy,
       settings,
       teamMembers: visible.filter((employee) => employee.active).length,
       present: teamAttendance.length,
@@ -500,16 +549,51 @@ function buildDashboard(user) {
     };
   }
   const employee = getEmployeeForUser(user);
-  const attendance = db.prepare(`
-    SELECT *, check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes
+  let attendance = db.prepare(`
+    SELECT id, employee_id AS employeeId, attendance_date AS date, attendance_date,
+           check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes,
+           check_in, check_out, worked_minutes,
+           break_minutes AS breakMinutes, break_minutes,
+           status, checkout_reason AS checkoutReason, checkout_reason,
+           checkout_note AS checkoutNote, checkout_note
     FROM attendance_records WHERE employee_id = ? AND attendance_date = ?
   `).get(employee.id, today);
+
+  if (!attendance) {
+    attendance = db.prepare(`
+      SELECT id, employee_id AS employeeId, attendance_date AS date, attendance_date,
+             check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes,
+             check_in, check_out, worked_minutes,
+             break_minutes AS breakMinutes, break_minutes,
+             status, checkout_reason AS checkoutReason, checkout_reason,
+             checkout_note AS checkoutNote, checkout_note
+      FROM attendance_records WHERE employee_id = ? AND check_out IS NULL
+      ORDER BY attendance_date DESC, check_in DESC LIMIT 1
+    `).get(employee.id);
+  }
+
+  let activeBreak = null;
+  let totalBreakMinutes = attendance?.break_minutes ?? 0;
+  if (attendance && !attendance.check_out) {
+    activeBreak = db.prepare(`
+      SELECT * FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1
+    `).get(attendance.id);
+    const breakSumRow = db.prepare(`
+      SELECT SUM(MAX(0, CAST((julianday(COALESCE(break_end, 'now')) - julianday(break_start)) * 1440 AS INTEGER))) AS total
+      FROM attendance_breaks WHERE attendance_record_id = ?
+    `).get(attendance.id);
+    totalBreakMinutes = breakSumRow?.total || 0;
+  }
 
   // Live real-time worked minutes calculation
   const liveWorkedMinutes = attendance
     ? (attendance.check_out
         ? (attendance.worked_minutes ?? 0)
         : Math.max(0, Math.floor((Date.now() - Date.parse(attendance.check_in)) / 60000)))
+    : null;
+
+  const sessionStatus = attendance
+    ? (attendance.check_out ? "completed" : (activeBreak ? "on_break" : "active"))
     : null;
 
   const progress = liveWorkedMinutes !== null
@@ -519,8 +603,12 @@ function buildDashboard(user) {
   const liveAttendance = attendance
     ? {
         ...attendance,
+        status: sessionStatus,
         workedMinutes: liveWorkedMinutes,
         worked_minutes: liveWorkedMinutes,
+        breakMinutes: totalBreakMinutes,
+        break_minutes: totalBreakMinutes,
+        activeBreakStart: activeBreak?.break_start ?? null,
         progress,
       }
     : null;
@@ -535,76 +623,119 @@ function buildDashboard(user) {
 
   const attendanceTrend = db.prepare(`
     SELECT attendance_date AS date, 1 AS present,
-      ROUND(CASE
-        WHEN worked_minutes IS NOT NULL THEN MIN(worked_minutes, ?)
-        WHEN check_out IS NULL THEN MIN(MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER)), ?)
+      CASE
+        WHEN worked_minutes IS NOT NULL THEN worked_minutes
+        WHEN check_out IS NULL THEN MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER))
         ELSE 0
-      END, 0) AS averageMinutes
+      END AS averageMinutes,
+      status,
+      check_in AS checkIn,
+      check_out AS checkOut,
+      break_minutes AS breakMinutes
     FROM attendance_records
     WHERE employee_id = ? AND attendance_date >= date(?, '-365 days') AND attendance_date <= ?
     ORDER BY attendance_date
-  `).all(chartExpectedMinutes, chartExpectedMinutes, employee.id, today, today);
+  `).all(employee.id, today, today);
 
-  // Synchronize today's live minutes in trend
-  if (attendance && !attendance.check_out && liveWorkedMinutes !== null) {
-    const todayTrend = attendanceTrend.find((item) => item.date === today);
-    if (todayTrend) {
-      todayTrend.averageMinutes = liveWorkedMinutes;
+  // Synchronize current attendance session in trend
+  if (liveAttendance) {
+    const recordDate = liveAttendance.date || liveAttendance.attendance_date || today;
+    const existingTrend = attendanceTrend.find((item) => item.date === recordDate);
+    if (existingTrend) {
+      existingTrend.averageMinutes = liveWorkedMinutes;
+      existingTrend.status = liveAttendance.status;
+      existingTrend.breakMinutes = totalBreakMinutes;
+      existingTrend.checkIn = liveAttendance.checkIn;
+      existingTrend.checkOut = liveAttendance.checkOut;
     } else {
-      attendanceTrend.push({ date: today, present: 1, averageMinutes: liveWorkedMinutes });
+      attendanceTrend.push({
+        date: recordDate,
+        present: 1,
+        averageMinutes: liveWorkedMinutes,
+        status: liveAttendance.status,
+        checkIn: liveAttendance.checkIn,
+        checkOut: liveAttendance.checkOut,
+        breakMinutes: totalBreakMinutes,
+      });
     }
   }
 
-  const attendanceReport = db.prepare(`
-    WITH RECURSIVE calendar(day) AS (
-      SELECT date(?, '-30 days')
-      UNION ALL
-      SELECT date(day, '+1 day') FROM calendar WHERE day < ?
-    ),
-    workdays AS (
-      SELECT day FROM calendar
-      WHERE strftime('%w', day) != '0'
-        AND NOT (strftime('%w', day) = '6' AND CAST(strftime('%d', day) AS INTEGER) BETWEEN 8 AND 14)
-        AND NOT EXISTS (SELECT 1 FROM company_holidays h WHERE h.holiday_date = day)
-      UNION
-      SELECT ? WHERE EXISTS (SELECT 1 FROM attendance_records WHERE attendance_date = ? AND employee_id = ?)
-    )
-    SELECT w.day AS date,
-      CASE WHEN ar.id IS NOT NULL THEN 1 ELSE 0 END AS present,
-      1 AS expected,
-      (SELECT COUNT(*) FROM leave_requests lr WHERE lr.employee_id = ? AND lr.status = 'approved' AND lr.start_date <= w.day AND lr.end_date >= w.day) AS approvedLeave,
-      (SELECT COUNT(*) FROM attendance_exceptions ax WHERE ax.employee_id = ? AND ax.attendance_date = w.day AND ax.status != 'resolved') AS reviewRequired,
-      ROUND(
-        CASE
-          WHEN ar.worked_minutes IS NOT NULL THEN MIN(100, CAST(ar.worked_minutes AS REAL) / ? * 100)
-          WHEN ar.check_in IS NOT NULL THEN MIN(100, CAST(MAX(0, CAST((julianday('now') - julianday(ar.check_in)) * 1440 AS INTEGER)) AS REAL) / ? * 100)
-          WHEN (SELECT COUNT(*) FROM leave_requests lr WHERE lr.employee_id = ? AND lr.status = 'approved' AND lr.start_date <= w.day AND lr.end_date >= w.day) > 0 THEN 100
-          ELSE 0
-        END,
-        0
-      ) AS attendancePercent
-    FROM workdays w
-    LEFT JOIN attendance_records ar ON ar.attendance_date = w.day AND ar.employee_id = ?
-    ORDER BY w.day
-  `).all(today, today, today, today, employee.id, employee.id, employee.id, chartExpectedMinutes, chartExpectedMinutes, employee.id, employee.id);
+  // Authoritative 30-day attendance report
+  const rawEmployeeRecords = db.prepare(`
+    SELECT attendance_date AS date, check_in AS checkIn, check_out AS checkOut,
+           worked_minutes AS workedMinutes, break_minutes AS breakMinutes, status
+    FROM attendance_records
+    WHERE employee_id = ? AND attendance_date >= date(?, '-30 days') AND attendance_date <= ?
+  `).all(employee.id, today, today);
+  const employeeRecordsMap = new Map(rawEmployeeRecords.map((r) => [r.date, r]));
 
-  // Synchronize today's percentage with live calculated minutes
-  if (attendance && !attendance.check_out && liveWorkedMinutes !== null) {
-    const todayPct = Math.min(100, Math.round((liveWorkedMinutes / chartExpectedMinutes) * 100));
-    const todayRep = attendanceReport.find((item) => item.date === today);
-    if (todayRep) {
-      todayRep.attendancePercent = todayPct;
-      todayRep.present = 1;
+  const employeeApprovedLeaves = db.prepare(`
+    SELECT start_date, end_date FROM leave_requests
+    WHERE employee_id = ? AND status = 'approved' AND start_date <= ? AND end_date >= date(?, '-30 days')
+  `).all(employee.id, today, today);
+
+  const employeeExceptions = new Set(db.prepare(`
+    SELECT attendance_date FROM attendance_exceptions
+    WHERE employee_id = ? AND status != 'resolved' AND attendance_date >= date(?, '-30 days') AND attendance_date <= ?
+  `).all(employee.id, today, today).map((r) => r.attendance_date));
+
+  const attendanceReport = [];
+  const startDay = new Date(`${today}T00:00:00Z`);
+  for (let offset = 29; offset >= 0; offset -= 1) {
+    const d = new Date(startDay);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const dayStr = d.toISOString().slice(0, 10);
+    const isToday = dayStr === today;
+    const dayPolicy = evaluateAttendanceDayPolicy(dayStr, holidaysMap);
+    const rec = isToday && liveAttendance ? liveAttendance : employeeRecordsMap.get(dayStr);
+    const hasApprovedLeave = employeeApprovedLeaves.some((l) => l.start_date <= dayStr && l.end_date >= dayStr);
+    const hasException = employeeExceptions.has(dayStr);
+
+    let status = "not_recorded";
+    let workedMins = null;
+    let pct = null;
+
+    if (rec) {
+      workedMins = rec.workedMinutes ?? rec.worked_minutes ?? null;
+      if (rec.check_out || rec.checkOut) {
+        status = "completed";
+      } else if (rec.status === "on_break") {
+        status = "on_break";
+      } else {
+        status = "working";
+      }
+      if (expectedMinutes && expectedMinutes > 0 && workedMins !== null) {
+        pct = Math.min(100, Math.round((workedMins / expectedMinutes) * 100));
+      }
+    } else if (hasApprovedLeave) {
+      status = "approved_leave";
+      pct = expectedMinutes ? 100 : null;
+    } else if (hasException) {
+      status = "exception";
+      pct = 0;
+    } else if (!dayPolicy.isWorkingDay) {
+      if (dayPolicy.reason === "sunday" || dayPolicy.reason === "second_saturday") {
+        status = "weekly_off";
+      } else {
+        status = "company_holiday";
+      }
     } else {
-      attendanceReport.push({
-        date: today,
-        present: 1,
-        expected: 1,
-        approvedLeave: 0,
-        reviewRequired: 0,
-        attendancePercent: todayPct,
-      });
+      status = "not_recorded";
+      pct = expectedMinutes ? 0 : null;
     }
+
+    attendanceReport.push({
+      date: dayStr,
+      present: rec ? 1 : 0,
+      expected: dayPolicy.isWorkingDay && !hasApprovedLeave ? 1 : 0,
+      approvedLeave: hasApprovedLeave ? 1 : 0,
+      reviewRequired: hasException ? 1 : 0,
+      attendancePercent: pct,
+      status,
+      workedMinutes: workedMins,
+      holidayName: dayPolicy.holidayName || null,
+      breakMinutes: rec?.break_minutes ?? rec?.breakMinutes ?? 0,
+    });
   }
 
   // Calculate 25 Paid Leaves Entitlement & Balance
@@ -628,14 +759,20 @@ function buildDashboard(user) {
   return {
     role: user.role,
     today,
+    attendanceDayPolicy,
     settings,
     attendance: liveAttendance,
     pendingLeaves: db.prepare("SELECT COUNT(*) AS value FROM leave_requests WHERE employee_id = ? AND status = 'pending'").get(employee.id).value,
     leaveTypes: db.prepare("SELECT id, name, paid FROM leave_types WHERE active = 1 ORDER BY name").all(),
     leaves,
     leaveBalance,
+    todayWorkReport: attendance?.id ? db.prepare(`
+      SELECT id, work_summary AS workSummary, project_reference AS projectReference,
+             blockers, submitted_at AS submittedAt
+      FROM daily_work_reports WHERE attendance_record_id = ?
+    `).get(attendance.id) || null : null,
     exceptions: db.prepare("SELECT attendance_date AS date, deadline_at AS deadlineAt, status FROM attendance_exceptions WHERE employee_id = ? ORDER BY id DESC LIMIT 5").all(employee.id),
-    recentAttendance: db.prepare("SELECT attendance_date AS date, check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes FROM attendance_records WHERE employee_id = ? ORDER BY attendance_date DESC LIMIT 7").all(employee.id),
+    recentAttendance: db.prepare("SELECT attendance_date AS date, check_in AS checkIn, check_out AS checkOut, worked_minutes AS workedMinutes, break_minutes AS breakMinutes, checkout_reason AS checkoutReason, checkout_note AS checkoutNote, status FROM attendance_records WHERE employee_id = ? ORDER BY attendance_date DESC, check_in DESC LIMIT 7").all(employee.id),
     attendanceTrend,
     attendanceReport,
   };
@@ -720,7 +857,7 @@ function verifyApplicationOtp(body, context) {
     fail(400, "This verification code is missing or expired. Request a new code.");
   }
   if (verification.email_attempts >= 5) fail(429, "Too many incorrect codes. Request a new verification code.");
-  if (hash(`${sessionHash}:email:${code}`) !== verification.email_code_hash) {
+  if (!timingSafeHashEqual(hash(`${sessionHash}:email:${code}`), verification.email_code_hash)) {
     db.prepare("UPDATE application_verifications SET email_attempts = email_attempts + 1 WHERE session_hash = ?").run(sessionHash);
     fail(400, "That verification code is incorrect. Check it and try again.");
   }
@@ -755,13 +892,10 @@ function createApplication(body, context) {
   if (body.privacyAcknowledged !== true) fail(400, "Please acknowledge the privacy notice to submit.");
 
   const photoUrl = typeof body.photoUrl === "string" && body.photoUrl.trim() ? body.photoUrl.trim() : null;
-  const education10thDoc = typeof body.education10thDoc === "string" && body.education10thDoc.trim() ? body.education10thDoc.trim() : null;
-  const educationInterDoc = typeof body.educationInterDoc === "string" && body.educationInterDoc.trim() ? body.educationInterDoc.trim() : null;
-  const educationHigherDoc = typeof body.educationHigherDoc === "string" && body.educationHigherDoc.trim() ? body.educationHigherDoc.trim() : null;
-  const panFront = typeof body.panFront === "string" && body.panFront.trim() ? body.panFront.trim() : null;
-  const panBack = typeof body.panBack === "string" && body.panBack.trim() ? body.panBack.trim() : null;
-  const aadharFront = typeof body.aadharFront === "string" && body.aadharFront.trim() ? body.aadharFront.trim() : null;
-  const aadharBack = typeof body.aadharBack === "string" && body.aadharBack.trim() ? body.aadharBack.trim() : null;
+  const documentFields = ["education10thDoc", "educationInterDoc", "educationHigherDoc", "panFront", "panBack", "aadharFront", "aadharBack"];
+  if (documentFields.some((field) => body[field] !== undefined && body[field] !== null && body[field] !== "")) {
+    fail(400, "Identity and education documents are not accepted through the public application. Use an approved secure document process if requested later.");
+  }
 
   return withTransaction(() => {
     const alreadyApplied = db.prepare(`
@@ -769,24 +903,16 @@ function createApplication(body, context) {
       UNION ALL SELECT 1 FROM employee_applications WHERE email = ? AND status = 'pending'
       LIMIT 1
     `).get(email, email);
-    const year = Number(currentDateInZone().slice(0, 4));
-    let employeeId = makeCompanyEmployeeId(year);
-    while (
-      db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId) ||
-      db.prepare("SELECT 1 FROM employee_applications WHERE reference = ?").get(employeeId)
-    ) {
-      employeeId = makeCompanyEmployeeId(year);
-    }
-    const reference = employeeId;
+    // Application references are opaque bearer tokens, not predictable employee IDs.
+    // Employee IDs are allocated separately during CEO approval.
+    const reference = `MM-APP-${randomBytes(16).toString("hex").toUpperCase()}`;
     const result = db.prepare(`
       INSERT INTO employee_applications(
         reference, full_name, first_name, last_name, email, mobile, phone, employment_type,
         position, department, proposed_joining_date, education, discussed_salary,
-        education_10th_doc, education_inter_doc, education_higher_doc,
-        pan_front, pan_back, aadhar_front, aadhar_back,
         privacy_acknowledged_at, password_hash, email_verified_at, phone_verified_at, photo_url
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       reference,
       fullName,
@@ -801,13 +927,6 @@ function createApplication(body, context) {
       proposedJoiningDate,
       education,
       discussedSalary,
-      education10thDoc,
-      educationInterDoc,
-      educationHigherDoc,
-      panFront,
-      panBack,
-      aadharFront,
-      aadharBack,
       timestamp(),
       passwordHash,
       verification.email_verified_at,
@@ -841,17 +960,9 @@ function approveApplication(user, applicationId) {
     if (application.status !== "pending") fail(409, "This application has already been reviewed.");
 
     const currentYear = Number(currentDateInZone().slice(0, 4));
-
-    let employeeId = application.reference;
-    if (!/^MM-\d{4}-[1-9]{4}$/.test(employeeId)) {
+    let employeeId = makeCompanyEmployeeId(currentYear);
+    while (db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId)) {
       employeeId = makeCompanyEmployeeId(currentYear);
-      while (
-        db.prepare("SELECT 1 FROM employees WHERE employee_id = ?").get(employeeId) ||
-        db.prepare("SELECT 1 FROM employee_applications WHERE reference = ? AND id != ?").get(employeeId, application.id)
-      ) {
-        employeeId = makeCompanyEmployeeId(currentYear);
-      }
-      db.prepare("UPDATE employee_applications SET reference = ? WHERE id = ?").run(employeeId, application.id);
     }
     let departmentId = null;
     if (application.department) {
@@ -891,40 +1002,7 @@ function approveApplication(user, applicationId) {
       employeeRowId = Number(employeeResult.lastInsertRowid);
     }
     
-    // Initialize 25 paid leave quota for approved employee
-    const annualLeaveType = db.prepare("SELECT id FROM leave_types WHERE paid = 1 LIMIT 1").get();
-    if (annualLeaveType) {
-      db.prepare(`
-        INSERT OR IGNORE INTO leave_balances(employee_id, leave_type_id, period_year, entitled_days, used_days)
-        VALUES (?, ?, ?, 25, 0)
-      `).run(employeeRowId, annualLeaveType.id, currentYear);
-    }
-
-    // Initialize salary structure and components based on discussed salary
-    const rawSalary = String(application.discussed_salary || "").replace(/[^0-9]/g, "");
-    const salaryMonthly = parseInt(rawSalary, 10);
-    if (!Number.isNaN(salaryMonthly) && salaryMonthly > 0) {
-      const effectiveDate = application.proposed_joining_date || currentDateInZone();
-      const basic = Math.round(salaryMonthly * 0.50);
-      const hra = Math.round(salaryMonthly * 0.30);
-      const special = Math.max(0, salaryMonthly - basic - hra);
-
-      const existingStruct = db.prepare("SELECT id FROM salary_structures WHERE employee_id = ? AND effective_from = ?").get(employeeRowId, effectiveDate);
-      let structId;
-      if (existingStruct) {
-        structId = existingStruct.id;
-        db.prepare("DELETE FROM salary_components WHERE salary_structure_id = ?").run(structId);
-      } else {
-        const structResult = db.prepare(`
-          INSERT INTO salary_structures(employee_id, effective_from, currency)
-          VALUES (?, ?, 'INR')
-        `).run(employeeRowId, effectiveDate);
-        structId = Number(structResult.lastInsertRowid);
-      }
-      db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'Basic Salary', 'earning', ?)").run(structId, basic * 100);
-      db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'House Rent Allowance (HRA)', 'earning', ?)").run(structId, hra * 100);
-      db.prepare("INSERT INTO salary_components(salary_structure_id, name, kind, amount_minor) VALUES (?, 'Special Allowance', 'earning', ?)").run(structId, special * 100);
-    }
+    // Salary structures and leave entitlements are not fabricated from an application form.
 
     db.prepare("UPDATE employee_applications SET status = 'approved', reviewed_by = ?, reviewed_at = ?, password_hash = NULL WHERE id = ? AND status = 'pending'").run(user.user_id, timestamp(), application.id);
     audit(user.user_id, "application.approved", "employee_application", application.id);
@@ -969,10 +1047,11 @@ function rejectApplication(user, applicationId, reason) {
 
 function runAttendanceExceptions() {
   const settings = settingsObject();
+  if (!attendancePolicyConfigured(settings)) return;
   const zone = settings.timezone || "Asia/Kolkata";
   const today = currentDateInZone(zone);
   const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
-  if (weekday === 0) return;
+  if (weekday === 0 || isSecondSaturday(today)) return;
   if (db.prepare("SELECT 1 FROM company_holidays WHERE holiday_date = ?").get(today)) return;
   const start = settings.scheduled_start || "10:00";
   const end = settings.scheduled_end || "18:00";
@@ -1091,34 +1170,23 @@ async function route(req, res, context, body, url) {
       status: 200,
       body: {
         enabled: !isProduction,
-        accounts: [
-          {
-            role: "ceo",
-            title: "CEO & Executive Portal",
-            email: DEMO_CREDENTIALS.ceo.email,
-            password: DEMO_CREDENTIALS.ceo.password,
-            badge: "Executive Leadership",
-            description: "Workforce metrics, employee approvals, audit trails, and company policies",
-          },
-          {
-            role: "employee",
-            title: "Employee Portal",
-            email: DEMO_CREDENTIALS.employee.email,
-            employeeId: DEMO_CREDENTIALS.employee.employeeId,
-            password: DEMO_CREDENTIALS.employee.password,
-            badge: "Staff Member",
-            description: "Personal check-in / check-out, leave requests, attendance history, and team directory",
-          },
-        ],
+        accounts: [{
+          role: "ceo",
+          title: "CEO & Executive Portal",
+          email: DEMO_CREDENTIALS.ceo.email,
+          password: DEMO_CREDENTIALS.ceo.password,
+          badge: "Executive Leadership",
+          description: "Workforce metrics, employee approvals, audit trails, and company policies",
+        }],
       },
     };
   }
   if (method === "POST" && path === "/api/auth/demo-login") {
     if (isProduction) fail(403, "Demo sign in is not available in production.");
-    const role = body.role === "ceo" ? "ceo" : body.role === "employee" ? "employee" : null;
-    if (!role) fail(400, "Valid demo role ('ceo' or 'employee') is required.");
+    const role = body.role === "ceo" ? "ceo" : null;
+    if (!role) fail(400, "Valid demo role ('ceo') is required.");
     ensureDemoAccounts();
-    const targetEmail = role === "ceo" ? DEMO_CREDENTIALS.ceo.email : DEMO_CREDENTIALS.employee.email;
+    const targetEmail = DEMO_CREDENTIALS.ceo.email;
     const user = db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE AND active = 1").get(targetEmail);
     if (!user) fail(500, "Demo account could not be initialized.");
     if (context.jar.mm_session) db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash(context.jar.mm_session));
@@ -1131,17 +1199,15 @@ async function route(req, res, context, body, url) {
     const password = requiredString(body.password, "Password", 256, 1);
     rateLimit(req, `login:${hash(identifier)}`, 8, 15 * 60 * 1000);
     const user = db.prepare(`
-      SELECT u.* FROM users u 
+      SELECT u.* FROM users u
       LEFT JOIN employees e ON e.user_id = u.id
-      LEFT JOIN employee_applications ea ON (ea.email = u.email OR ea.reference = e.employee_id)
       WHERE (
-        u.email = ? COLLATE NOCASE 
+        u.email = ? COLLATE NOCASE
         OR e.employee_id = ? COLLATE NOCASE
-        OR ea.reference = ? COLLATE NOCASE
         OR (? = 'ceo' AND u.email = 'demo.ceo@metaminds.local')
         OR (? = 'employee' AND u.email = 'demo.employee@metaminds.local')
       ) LIMIT 1
-    `).get(identifier, identifier, identifier, identifier, identifier);
+    `).get(identifier, identifier, identifier, identifier);
     if (!user) {
       const pendingApp = db.prepare(`
         SELECT reference, status, rejection_reason FROM employee_applications
@@ -1278,7 +1344,7 @@ async function route(req, res, context, body, url) {
   }
   if (method === "GET" && path === "/api/dashboard") {
     const user = requireUser(context);
-    return { status: 200, body: buildDashboard(user) };
+    return { status: 200, body: buildDashboard(user, context) };
   }
   if (method === "GET" && path === "/api/applications") {
     const user = requireUser(context);
@@ -1287,11 +1353,8 @@ async function route(req, res, context, body, url) {
       a.id, a.reference, a.full_name AS name, a.first_name AS firstName, a.last_name AS lastName,
       a.email, a.phone, a.employment_type AS employmentType, a.position, a.department,
       a.proposed_joining_date AS proposedJoiningDate, a.discussed_salary AS discussedSalary,
-      a.education, a.education_10th_doc AS education10thDoc, a.education_inter_doc AS educationInterDoc,
-      a.education_higher_doc AS educationHigherDoc, a.pan_front AS panFront, a.pan_back AS panBack,
-      a.aadhar_front AS aadharFront, a.aadhar_back AS aadharBack, a.status,
-      a.rejection_reason AS rejectionReason, a.photo_url AS photoUrl, a.created_at AS createdAt,
-      e.employee_id AS employeeId
+      a.education, a.status, a.rejection_reason AS rejectionReason,
+      a.photo_url AS photoUrl, a.created_at AS createdAt, e.employee_id AS employeeId
     `;
     const rawStatus = url.searchParams.get("status");
     const statusParam = rawStatus ? rawStatus.toLowerCase().trim() : "pending";
@@ -1327,10 +1390,15 @@ async function route(req, res, context, body, url) {
   if (method === "GET" && path === "/api/policy") {
     requireUser(context);
     const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const today = currentDateInZone(zone, undefined, context);
+    const holidaysMap = getCompanyHolidaysMap();
+    const attendanceDayPolicy = evaluateAttendanceDayPolicy(today, holidaysMap);
     return { status: 200, body: {
       timezone: settings.timezone,
-      today: currentDateInZone(settings.timezone),
-      expectedWorkingMinutes: Number(settings.expected_working_minutes) || null,
+      today,
+      attendanceDayPolicy,
+      expectedWorkingMinutes: attendancePolicyConfigured(settings) ? Number(settings.expected_working_minutes) : null,
       scheduledStart: settings.scheduled_start,
       scheduledEnd: settings.scheduled_end,
       absenceWarningHours: Number(settings.absence_warning_hours),
@@ -1339,67 +1407,321 @@ async function route(req, res, context, body, url) {
   if (method === "POST" && path === "/api/attendance/check-in") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
-    const date = currentDateInZone();
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+
+    const holidaysMap = getCompanyHolidaysMap();
+    const dayPolicy = evaluateAttendanceDayPolicy(date, holidaysMap);
+    if (!dayPolicy.isWorkingDay) {
+      fail(403, dayPolicy.message);
+    }
+
     const now = timestamp();
     try {
-      db.prepare("INSERT INTO attendance_records(employee_id, attendance_date, check_in) VALUES (?, ?, ?)").run(employee.id, date, now);
+      db.prepare("INSERT INTO attendance_records(employee_id, attendance_date, check_in, status) VALUES (?, ?, ?, 'active')").run(employee.id, date, now);
     } catch (error) {
       if (error.code === "ERR_SQLITE_ERROR") fail(409, "You have already checked in for today.");
       throw error;
     }
     db.prepare("UPDATE attendance_exceptions SET status = 'resolved', resolved_at = ? WHERE employee_id = ? AND attendance_date = ? AND status != 'resolved'").run(now, employee.id, date);
     audit(user.user_id, "attendance.check_in", "attendance_record", `${employee.id}:${date}`);
-    return { status: 201, body: { checkIn: now, date } };
+    return { status: 201, body: { checkIn: now, date, status: "active" } };
+  }
+  if (method === "POST" && path === "/api/attendance/break/start") {
+    const user = requireUser(context);
+    const employee = getEmployeeForUser(user);
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+    let record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    if (!record || record.check_out) {
+      const openRecord = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND check_out IS NULL ORDER BY attendance_date DESC, check_in DESC LIMIT 1").get(employee.id);
+      if (openRecord) {
+        record = openRecord;
+      }
+    }
+    if (!record) fail(409, "Check in before starting a break.");
+    if (record.check_out) fail(409, "Attendance session is already completed.");
+
+    const openBreak = db.prepare("SELECT * FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NULL").get(record.id);
+    if (openBreak || record.status === "on_break") {
+      fail(409, "You are already on a break.");
+    }
+
+    const now = timestamp();
+    db.prepare("INSERT INTO attendance_breaks(attendance_record_id, break_start) VALUES (?, ?)").run(record.id, now);
+    db.prepare("UPDATE attendance_records SET status = 'on_break' WHERE id = ?").run(record.id);
+    audit(user.user_id, "attendance.break_start", "attendance_record", record.id);
+    return { status: 200, body: { breakStart: now, status: "on_break" } };
+  }
+  if (method === "POST" && path === "/api/attendance/break/resume") {
+    const user = requireUser(context);
+    const employee = getEmployeeForUser(user);
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+    let record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    if (!record || record.check_out) {
+      const openRecord = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND check_out IS NULL ORDER BY attendance_date DESC, check_in DESC LIMIT 1").get(employee.id);
+      if (openRecord) {
+        record = openRecord;
+      }
+    }
+    if (!record) fail(409, "Check in before resuming work.");
+    if (record.check_out) fail(409, "Attendance session is already completed.");
+
+    const openBreak = db.prepare("SELECT * FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NULL ORDER BY break_start DESC LIMIT 1").get(record.id);
+    if (!openBreak) {
+      fail(409, "No active break found to resume.");
+    }
+
+    const now = timestamp();
+    db.prepare("UPDATE attendance_breaks SET break_end = ? WHERE id = ?").run(now, openBreak.id);
+
+    const breakSumRow = db.prepare(`
+      SELECT SUM(MAX(0, CAST((julianday(break_end) - julianday(break_start)) * 1440 AS INTEGER))) AS total
+      FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NOT NULL
+    `).get(record.id);
+    const totalBreakMinutes = breakSumRow?.total || 0;
+
+    db.prepare("UPDATE attendance_records SET status = 'active', break_minutes = ? WHERE id = ?").run(totalBreakMinutes, record.id);
+    audit(user.user_id, "attendance.break_resume", "attendance_record", record.id);
+    return { status: 200, body: { breakEnd: now, breakMinutes: totalBreakMinutes, status: "active" } };
   }
   if (method === "POST" && path === "/api/attendance/check-out") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
-    const date = currentDateInZone();
-    const record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    const settings = settingsObject();
+    const zone = settings.timezone || "Asia/Kolkata";
+    const date = currentDateInZone(zone, undefined, context);
+    let record = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND attendance_date = ?").get(employee.id, date);
+    if (!record || record.check_out) {
+      const openRecord = db.prepare("SELECT * FROM attendance_records WHERE employee_id = ? AND check_out IS NULL ORDER BY attendance_date DESC, check_in DESC LIMIT 1").get(employee.id);
+      if (openRecord) {
+        record = openRecord;
+      }
+    }
     if (!record) fail(409, "Check in before checking out.");
     if (record.check_out) fail(409, "You have already checked out for today.");
+
+    const validReasons = ["workday_complete", "leaving_early", "other"];
+    let reason = "workday_complete";
+    if (typeof body.reason === "string" && validReasons.includes(body.reason)) {
+      reason = body.reason;
+    }
+
+    let workSummary = null;
+    let projectReference = null;
+    let blockers = null;
+    let note = null;
+
+    if (reason === "workday_complete") {
+      if (body.reason === "workday_complete" || body.workSummary !== undefined) {
+        workSummary = requiredString(body.workSummary, "Daily work summary", 2000, 20);
+      } else {
+        workSummary = "Workday completed shift.";
+      }
+      if (typeof body.projectReference === "string" && body.projectReference.trim()) {
+        projectReference = body.projectReference.trim().slice(0, 255);
+      }
+      if (typeof body.blockers === "string" && body.blockers.trim()) {
+        blockers = body.blockers.trim().slice(0, 1000);
+      }
+      note = workSummary;
+    } else if (reason === "leaving_early") {
+      note = requiredString(body.note, "Early departure reason", 500, 3);
+    } else if (reason === "other") {
+      note = requiredString(body.note, "Explanation note", 500, 3);
+    }
+
     const now = timestamp();
-    const minutes = workedMinutes(record.check_in, now);
-    db.prepare("UPDATE attendance_records SET check_out = ?, worked_minutes = ? WHERE id = ? AND check_out IS NULL").run(now, minutes, record.id);
-    audit(user.user_id, "attendance.check_out", "attendance_record", record.id);
-    return { status: 200, body: { checkOut: now, workedMinutes: minutes } };
+    let minutes = 0;
+    let totalBreakMinutes = 0;
+
+    withTransaction(() => {
+      // Auto-close any unfinalized break interval
+      db.prepare("UPDATE attendance_breaks SET break_end = ? WHERE attendance_record_id = ? AND break_end IS NULL").run(now, record.id);
+
+      const breakSumRow = db.prepare(`
+        SELECT SUM(MAX(0, CAST((julianday(break_end) - julianday(break_start)) * 1440 AS INTEGER))) AS total
+        FROM attendance_breaks WHERE attendance_record_id = ? AND break_end IS NOT NULL
+      `).get(record.id);
+      totalBreakMinutes = breakSumRow?.total || 0;
+
+      minutes = workedMinutes(record.check_in, now);
+      db.prepare(`
+        UPDATE attendance_records
+        SET check_out = ?, worked_minutes = ?, break_minutes = ?, checkout_reason = ?, checkout_note = ?, status = 'completed'
+        WHERE id = ? AND check_out IS NULL
+      `).run(now, minutes, totalBreakMinutes, reason, note, record.id);
+
+      if (reason === "workday_complete" && workSummary) {
+        db.prepare(`
+          INSERT INTO daily_work_reports (employee_id, attendance_record_id, work_date, work_summary, project_reference, blockers, submitted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(attendance_record_id) DO UPDATE SET
+            work_summary = excluded.work_summary,
+            project_reference = excluded.project_reference,
+            blockers = excluded.blockers,
+            updated_at = excluded.submitted_at
+        `).run(employee.id, record.id, record.attendance_date, workSummary, projectReference, blockers, now);
+      }
+    });
+
+    audit(user.user_id, "attendance.check_out", "attendance_record", `${record.id}:${reason}`);
+    return {
+      status: 200,
+      body: {
+        checkOut: now,
+        workedMinutes: minutes,
+        breakMinutes: totalBreakMinutes,
+        checkoutReason: reason,
+        workSummary,
+        status: "completed",
+      },
+    };
+  }
+  if (method === "GET" && (path === "/api/daily-work-reports" || path === "/api/attendance/reports")) {
+    const user = requireUser(context);
+
+    if (user.role === "employee") {
+      const employee = getEmployeeForUser(user);
+      const reports = db.prepare(`
+        SELECT r.id, r.employee_id AS employeeId, r.attendance_record_id AS attendanceRecordId,
+               r.work_date AS workDate, r.work_summary AS workSummary,
+               r.project_reference AS projectReference, r.blockers,
+               r.submitted_at AS submittedAt, r.updated_at AS updatedAt,
+               e.full_name AS employeeName, e.employee_id AS companyEmployeeId,
+               d.name AS department, a.worked_minutes AS workedMinutes,
+               a.checkout_reason AS checkoutReason
+        FROM daily_work_reports r
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN attendance_records a ON a.id = r.attendance_record_id
+        WHERE r.employee_id = ?
+        ORDER BY r.work_date DESC, r.submitted_at DESC
+        LIMIT 60
+      `).all(employee.id);
+      return { status: 200, body: reports };
+    }
+
+    if (user.role === "ceo") {
+      let sql = `
+        SELECT r.id, r.employee_id AS employeeId, r.attendance_record_id AS attendanceRecordId,
+               r.work_date AS workDate, r.work_summary AS workSummary,
+               r.project_reference AS projectReference, r.blockers,
+               r.submitted_at AS submittedAt, r.updated_at AS updatedAt,
+               e.full_name AS employeeName, e.employee_id AS companyEmployeeId,
+               d.name AS department, a.worked_minutes AS workedMinutes,
+               a.checkout_reason AS checkoutReason
+        FROM daily_work_reports r
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN attendance_records a ON a.id = r.attendance_record_id
+        WHERE 1=1
+      `;
+      const params = [];
+      const dateParam = url.searchParams.get("date");
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        sql += " AND r.work_date = ?";
+        params.push(dateParam);
+      }
+      const monthParam = url.searchParams.get("month");
+      if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+        sql += " AND r.work_date LIKE ?";
+        params.push(`${monthParam}%`);
+      }
+      const empParam = url.searchParams.get("employeeId");
+      if (empParam) {
+        sql += " AND (e.employee_id = ? OR e.full_name LIKE ?)";
+        params.push(empParam, `%${empParam}%`);
+      }
+      const deptParam = url.searchParams.get("department");
+      if (deptParam) {
+        sql += " AND d.name = ?";
+        params.push(deptParam);
+      }
+      sql += " ORDER BY r.work_date DESC, r.submitted_at DESC LIMIT 100";
+      const reports = db.prepare(sql).all(...params);
+      return { status: 200, body: reports };
+    }
+
+    if (user.role === "team_lead") {
+      const visible = listVisibleEmployees(user);
+      const employeeIds = visible.map((emp) => emp.id);
+      if (!employeeIds.length) return { status: 200, body: [] };
+      const placeholders = employeeIds.map(() => "?").join(",");
+      let sql = `
+        SELECT r.id, r.employee_id AS employeeId, r.attendance_record_id AS attendanceRecordId,
+               r.work_date AS workDate, r.work_summary AS workSummary,
+               r.project_reference AS projectReference, r.blockers,
+               r.submitted_at AS submittedAt, r.updated_at AS updatedAt,
+               e.full_name AS employeeName, e.employee_id AS companyEmployeeId,
+               d.name AS department, a.worked_minutes AS workedMinutes,
+               a.checkout_reason AS checkoutReason
+        FROM daily_work_reports r
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN departments d ON d.id = e.department_id
+        LEFT JOIN attendance_records a ON a.id = r.attendance_record_id
+        WHERE r.employee_id IN (${placeholders})
+      `;
+      const params = [...employeeIds];
+      const dateParam = url.searchParams.get("date");
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        sql += " AND r.work_date = ?";
+        params.push(dateParam);
+      }
+      sql += " ORDER BY r.work_date DESC, r.submitted_at DESC LIMIT 100";
+      const reports = db.prepare(sql).all(...params);
+      return { status: 200, body: reports };
+    }
+
+    fail(403, "You are not authorized to view daily work reports.");
   }
   if (method === "POST" && path === "/api/leave") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const leaveTypeId = Number(body.leaveTypeId);
-    if (!Number.isInteger(leaveTypeId) || !db.prepare("SELECT 1 FROM leave_types WHERE id = ? AND active = 1").get(leaveTypeId)) {
-      fail(400, "Choose an available leave type.");
-    }
+    const leaveType = Number.isInteger(leaveTypeId)
+      ? db.prepare("SELECT id, paid FROM leave_types WHERE id = ? AND active = 1").get(leaveTypeId)
+      : null;
+    if (!leaveType) fail(400, "Choose an available leave type.");
     const startDate = validDate(body.startDate, "Start date");
     const endDate = validDate(body.endDate, "End date");
     if (startDate > endDate) fail(400, "End date must be on or after the start date.");
     const reason = requiredString(body.reason, "Reason", 1000, 3);
-
     const holidaysSet = new Set(db.prepare("SELECT holiday_date FROM company_holidays").all().map((r) => r.holiday_date));
     const workingDays = countWorkingDays(startDate, endDate, holidaysSet);
-    if (workingDays === 0) {
-      fail(400, "The requested period contains only non-working days or company holidays.");
-    }
+    if (workingDays === 0) fail(400, "The requested period contains only non-working days or company holidays.");
 
     const year = startDate.slice(0, 4);
-    const approvedRow = db.prepare(`
-      SELECT COALESCE(SUM(working_days_count), 0) AS used
-      FROM leave_requests lr
-      JOIN leave_types lt ON lt.id = lr.leave_type_id
-      WHERE lr.employee_id = ? AND lr.status = 'approved' AND lt.paid = 1
-        AND strftime('%Y', lr.start_date) = ?
-    `).get(employee.id, year);
-    const usedDays = approvedRow?.used ?? 0;
-    const entitledDays = 25;
-    const remaining = Math.max(0, entitledDays - usedDays);
+    let entitledDays = null;
+    let remaining = null;
+    if (leaveType.paid) {
+      const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
+      entitledDays = /^\d{1,3}$/.test(configured) ? Number(configured) : null;
+      if (entitledDays === null || entitledDays > 365) {
+        fail(503, "Paid leave is unavailable until the company approves and configures its annual paid-leave entitlement.");
+      }
+      const approvedRow = db.prepare(`
+        SELECT COALESCE(SUM(CASE
+          WHEN lr.pay_treatment = 'half_pay' THEN lr.working_days_count * 0.5
+          WHEN lr.pay_treatment = 'unpaid' THEN 0
+          ELSE lr.working_days_count
+        END), 0) AS used
+        FROM leave_requests lr
+        JOIN leave_types lt ON lt.id = lr.leave_type_id
+        WHERE lr.employee_id = ? AND lr.status = 'approved' AND lt.paid = 1
+          AND strftime('%Y', lr.start_date) = ?
+      `).get(employee.id, year);
+      remaining = Math.max(0, entitledDays - (approvedRow?.used ?? 0));
+    }
 
-    let payTreatment = "full_paid";
+    let payTreatment = leaveType.paid ? "full_paid" : "unpaid";
     let requiresCeoApproval = 0;
     let excessDays = 0;
-
-    if (workingDays > remaining) {
-      payTreatment = "half_pay";
+    if (leaveType.paid && workingDays > remaining) {
       requiresCeoApproval = 1;
       excessDays = workingDays - remaining;
     }
@@ -1429,35 +1751,41 @@ async function route(req, res, context, body, url) {
             JOIN users u ON u.id = manager_employee.user_id
             WHERE member.employee_id = ? AND u.role = 'team_lead' AND u.active = 1
           `).all(employee.id);
-
       const targetApprovers = approvers.length ? approvers : db.prepare("SELECT id, email FROM users WHERE role = 'ceo' AND active = 1").all();
       for (const approver of targetApprovers) {
-        notifyUser(approver.id, "leave", requiresCeoApproval ? "Excess leave needs CEO approval" : "Leave request submitted",
+        notifyUser(approver.id, "leave", requiresCeoApproval ? "Paid leave needs CEO approval" : "Leave request submitted",
           requiresCeoApproval
-            ? `Employee requested ${workingDays} days (${excessDays} days beyond 25 paid limit). CEO review required.`
+            ? `Employee requested ${workingDays} paid leave days (${excessDays} days beyond the configured annual entitlement). CEO review required.`
             : "A new leave request is waiting for your review.");
-        queueEmail(approver.email, requiresCeoApproval ? "Excess leave request pending CEO approval" : "Leave request submitted",
+        queueEmail(approver.email, requiresCeoApproval ? "Paid leave request pending CEO approval" : "Leave request submitted",
           "A new leave request is waiting for your review. Sign in to the people portal to review it.");
       }
       return Number(inserted.lastInsertRowid);
     });
-    return { status: 201, body: { id: result, status: "pending", requiresCeoApproval, excessDays, workingDays } };
+    return { status: 201, body: { id: result, status: "pending", requiresCeoApproval, excessDays, workingDays, payTreatment } };
   }
   if (method === "GET" && path === "/api/leave/balance") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const year = currentDateInZone().slice(0, 4);
+    const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
+    const entitled = /^\d{1,3}$/.test(configured) ? Number(configured) : null;
+    if (entitled === null || entitled > 365) {
+      fail(503, "Paid leave balances are unavailable until the company approves and configures its annual paid-leave entitlement.");
+    }
     const approvedRow = db.prepare(`
-      SELECT COALESCE(SUM(working_days_count), 0) AS used
+      SELECT COALESCE(SUM(CASE
+        WHEN lr.pay_treatment = 'half_pay' THEN lr.working_days_count * 0.5
+        WHEN lr.pay_treatment = 'unpaid' THEN 0
+        ELSE lr.working_days_count
+      END), 0) AS used
       FROM leave_requests lr
       JOIN leave_types lt ON lt.id = lr.leave_type_id
       WHERE lr.employee_id = ? AND lr.status = 'approved' AND lt.paid = 1
         AND strftime('%Y', lr.start_date) = ?
     `).get(employee.id, year);
     const used = approvedRow?.used ?? 0;
-    const entitled = 25;
-    const remaining = Math.max(0, entitled - used);
-    return { status: 200, body: { entitled, used, remaining, year: Number(year) } };
+    return { status: 200, body: { entitled, used, remaining: Math.max(0, entitled - used), year: Number(year) } };
   }
   if (method === "GET" && path === "/api/leave") {
     const user = requireUser(context);
@@ -1503,22 +1831,24 @@ async function route(req, res, context, body, url) {
     if (!request) fail(404, "Pending leave request not found.");
     if (user.employee_row_id === request.employee_id) fail(403, "You cannot approve your own leave request.");
     if (!canAccessEmployee(user, request.employee_id)) fail(403, "This employee is outside your assigned team.");
-
+    const leaveType = db.prepare("SELECT paid FROM leave_types WHERE id = ?").get(request.leave_type_id);
+    if (!leaveType) fail(409, "The leave type for this request is no longer available.");
     if (request.requires_ceo_approval && user.role !== "ceo") {
-      fail(403, "This request exceeds the 25 paid leave quota and requires CEO authorization.");
+      fail(403, "This request exceeds the configured annual paid-leave entitlement and requires CEO authorization.");
     }
-
     const decision = leaveAction[2] === "approve" ? "approved" : "rejected";
     const reason = decision === "rejected" ? requiredString(body.reason, "Rejection reason", 500, 3) : null;
-
-    let finalPayTreatment = request.pay_treatment || "full_paid";
-    if (decision === "approved" && user.role === "ceo" && body.payTreatment) {
-      if (["full_paid", "half_pay", "unpaid"].includes(body.payTreatment)) {
+    let finalPayTreatment = leaveType.paid ? (request.pay_treatment || "full_paid") : "unpaid";
+    if (decision === "approved" && leaveType.paid) {
+      const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
+      if (!/^\d{1,3}$/.test(configured) || Number(configured) > 365) {
+        fail(503, "Paid leave approval is unavailable until the company configures its annual paid-leave entitlement.");
+      }
+      if (user.role === "ceo" && body.payTreatment && ["full_paid", "half_pay", "unpaid"].includes(body.payTreatment)) {
         finalPayTreatment = body.payTreatment;
       }
     }
     const ceoNotes = body.notes ? String(body.notes).slice(0, 500) : null;
-
     const employeeUser = db.prepare("SELECT u.id, u.email FROM employees e JOIN users u ON u.id = e.user_id WHERE e.id = ?").get(request.employee_id);
     withTransaction(() => {
       db.prepare(`
@@ -1526,27 +1856,13 @@ async function route(req, res, context, body, url) {
         SET status = ?, pay_treatment = ?, ceo_decision_notes = ?, reviewed_by = ?, reviewed_at = ?
         WHERE id = ? AND status = 'pending'
       `).run(decision, finalPayTreatment, ceoNotes, user.user_id, timestamp(), request.id);
-
       db.prepare("INSERT INTO leave_approvals(leave_request_id, reviewer_user_id, decision, reason) VALUES (?, ?, ?, ?)")
         .run(request.id, user.user_id, decision, reason || ceoNotes);
-
-      // If approved, update leave_balances
-      if (decision === "approved") {
-        const year = Number(request.start_date.slice(0, 4));
-        const daysToCount = finalPayTreatment === "half_pay" ? (request.working_days_count * 0.5) : request.working_days_count;
-        db.prepare(`
-          INSERT INTO leave_balances(employee_id, leave_type_id, period_year, entitled_days, used_days)
-          VALUES (?, ?, ?, 25, ?)
-          ON CONFLICT(employee_id, leave_type_id, period_year) DO UPDATE SET used_days = used_days + ?
-        `).run(request.employee_id, request.leave_type_id, year, daysToCount, daysToCount);
-      }
-
       const treatmentLabel = finalPayTreatment === "half_pay"
         ? " (Approved at 50% Half Pay)"
         : finalPayTreatment === "full_paid"
-        ? " (Approved as 100% Paid Leave)"
-        : "";
-
+          ? " (Approved as 100% Paid Leave)"
+          : " (Approved as Unpaid Leave)";
       notifyUser(employeeUser.id, "leave", `Leave request ${decision}`, decision === "approved"
         ? `Your leave request was approved${treatmentLabel}.`
         : `Your leave request was not approved. ${reason}`);
@@ -1556,6 +1872,40 @@ async function route(req, res, context, body, url) {
       audit(user.user_id, `leave.${decision}`, "leave_request", request.id);
     });
     return { status: 200, body: { ok: true, status: decision, payTreatment: finalPayTreatment } };
+  }
+  if (method === "GET" && path === "/api/company-holidays") {
+    requireUser(context);
+    return {
+      status: 200,
+      body: db.prepare("SELECT id, holiday_date AS holidayDate, name FROM company_holidays ORDER BY holiday_date").all(),
+    };
+  }
+  if (method === "POST" && path === "/api/company-holidays") {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const holidayDate = validDate(body.date, "Holiday date");
+    if (holidayDate < currentDateInZone()) fail(400, "New company holidays must be today or a future date.");
+    const name = requiredString(body.name, "Holiday name", 120, 2);
+    if (db.prepare("SELECT 1 FROM company_holidays WHERE holiday_date = ?").get(holidayDate)) {
+      fail(409, "A company holiday already exists on that date.");
+    }
+    const result = db.prepare("INSERT INTO company_holidays(holiday_date, name) VALUES (?, ?)").run(holidayDate, name);
+    audit(user.user_id, "company_holiday.created", "company_holiday", result.lastInsertRowid);
+    return { status: 201, body: { id: Number(result.lastInsertRowid), holidayDate, name } };
+  }
+  if (method === "POST" && path === "/api/company-holidays/remove") {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const id = Number(body.id);
+    if (!Number.isInteger(id) || id <= 0) fail(400, "A valid holiday ID is required.");
+    const holiday = db.prepare("SELECT id, holiday_date, name FROM company_holidays WHERE id = ?").get(id);
+    if (!holiday) fail(404, "Company holiday not found.");
+    if (holiday.holiday_date <= currentDateInZone()) fail(409, "Past and current company holidays cannot be removed.");
+    withTransaction(() => {
+      db.prepare("DELETE FROM company_holidays WHERE id = ?").run(id);
+      audit(user.user_id, "company_holiday.removed", "company_holiday", id);
+    });
+    return { status: 200, body: { ok: true } };
   }
   if (method === "GET" && path === "/api/leave-types") {
     requireUser(context);
@@ -1637,7 +1987,7 @@ async function route(req, res, context, body, url) {
   if (method === "POST" && path === "/api/settings") {
     const user = requireUser(context);
     requireRole(user, "ceo");
-    const allowed = new Set(["timezone", "scheduled_start", "scheduled_end", "expected_working_minutes", "absence_warning_hours"]);
+    const allowed = new Set(["timezone", "scheduled_start", "scheduled_end", "expected_working_minutes", "absence_warning_hours", "attendance_policy_confirmed"]);
     withTransaction(() => {
     for (const [key, value] of Object.entries(body)) {
       if (!allowed.has(key) || typeof value !== "string") fail(400, "Settings contain an unsupported or invalid value.");
@@ -1654,9 +2004,25 @@ async function route(req, res, context, body, url) {
         fail(400, "Expected paid working time must be 1-1440 minutes, or blank until configured.");
       } else if (key === "absence_warning_hours" && (!/^\d+$/.test(sanitized) || Number(sanitized) < 1 || Number(sanitized) > 24)) {
         fail(400, "Absence warning period must be 1-24 hours.");
+      } else if (key === "attendance_policy_confirmed" && !["true", "false"].includes(sanitized)) {
+        fail(400, "Attendance policy confirmation must be true or false.");
       }
       setSetting(key, sanitized);
     }
+    const confirmed = body.attendance_policy_confirmed === "true";
+    if (confirmed) {
+      const current = settingsObject();
+      const expectedMinutes = Number(current.expected_working_minutes);
+      const startMinutes = Number(current.scheduled_start.slice(0, 2)) * 60 + Number(current.scheduled_start.slice(3, 5));
+      const endMinutes = Number(current.scheduled_end.slice(0, 2)) * 60 + Number(current.scheduled_end.slice(3, 5));
+      if (!Number.isInteger(expectedMinutes) || expectedMinutes < 1 || expectedMinutes > 1440) {
+        fail(400, "Enter the approved expected workday duration before confirming the attendance policy.");
+      }
+      if (endMinutes <= startMinutes) fail(400, "Scheduled end must be later than scheduled start on the same day.");
+    } else {
+      setSetting("expected_working_minutes", "");
+    }
+    setSetting("attendance_policy_confirmed", confirmed ? "true" : "false");
     audit(user.user_id, "company.settings_updated", "company_settings", "attendance_policy");
     });
     return { status: 200, body: { settings: settingsObject() } };
@@ -1669,6 +2035,9 @@ async function route(req, res, context, body, url) {
     const result = db.prepare("UPDATE email_outbox SET status = 'pending', attempts = 0, last_error = NULL WHERE status = 'failed'").run();
     audit(user.user_id, "email.failed_messages_retried", "email_outbox", result.changes);
     return { status: 200, body: { queued: result.changes } };
+  }
+  if (path === "/api/payroll" || path === "/api/payroll/runs/generate" || path === "/api/payroll/runs/disburse") {
+    fail(503, "Payroll is disabled until company-approved salary, attendance, statutory deduction, and disbursement policies are configured and reviewed.");
   }
   if (method === "GET" && path === "/api/payroll") {
     const user = requireUser(context);
@@ -1886,12 +2255,23 @@ function serveStatic(req, res, pathname) {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Frontend build not found. Run npm run build.");
     return;
   }
-  let target = resolve(dist, `.${decodeURIComponent(pathname)}`);
+  const decodedPathname = decodeURIComponent(pathname);
+  // The site root must resolve to the SPA entry point, not the dist directory.
+  let target = decodedPathname === "/"
+    ? resolve(dist, "index.html")
+    : resolve(dist, `.${decodedPathname}`);
   if (!target.startsWith(`${dist}${sep}`) && target !== resolve(dist, "index.html")) {
     res.writeHead(403).end("Forbidden");
     return;
   }
-  if (!existsSync(target)) target = resolve(dist, "index.html");
+  if (!existsSync(target)) {
+    const acceptsHtml = (req.headers.accept ?? "").includes("text/html");
+    if (extname(decodedPathname) || !acceptsHtml) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }).end("Not found.");
+      return;
+    }
+    target = resolve(dist, "index.html");
+  }
   const contentType = mimeType(target);
   res.writeHead(200, {
     "Content-Type": contentType,
@@ -1934,7 +2314,7 @@ const server = createServer(async (req, res) => {
     }
     serveStatic(req, res, url.pathname);
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
+    const status = error instanceof HttpError ? error.status : error instanceof URIError ? 400 : 500;
     if (status >= 500) {
       console.error("Request failed", {
         method: req.method,
@@ -1946,7 +2326,7 @@ const server = createServer(async (req, res) => {
     }
     if (res.headersSent) return res.end();
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ error: status === 500 ? (error.message || "The request could not be completed.") : error.message }));
+    res.end(JSON.stringify({ error: status === 500 ? "An unexpected server error occurred. Please try again later." : error instanceof URIError ? "The request path is malformed." : error.message }));
   }
 });
 

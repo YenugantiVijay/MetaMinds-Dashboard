@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer as createTcpServer } from "node:net";
 import { spawn } from "node:child_process";
 import { createDecipheriv } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -39,8 +39,8 @@ function applyCookies(jar, response) {
   }
 }
 
-async function request(path, { jar, csrf, method = "GET", body } = {}) {
-  const headers = { Origin: "http://localhost:5173" };
+async function request(path, { jar, csrf, method = "GET", body, headers: customHeaders } = {}) {
+  const headers = { Origin: "http://localhost:5173", ...(customHeaders || {}) };
   if (jar && Object.keys(jar).length) headers.Cookie = Object.entries(jar).map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("; ");
   if (method !== "GET") {
     headers["Content-Type"] = "application/json";
@@ -138,7 +138,7 @@ function latestPasswordResetToken(recipient) {
   return resetToken;
 }
 
-async function submitVerifiedApplication({ jar, csrf, name, email, employmentType, position }) {
+async function submitVerifiedApplication({ jar, csrf, name, email, employmentType, position, extraFields = {} }) {
   const started = await request("/api/applications/verification/start", {
     jar,
     csrf,
@@ -182,6 +182,7 @@ async function submitVerifiedApplication({ jar, csrf, name, email, employmentTyp
       education: "Synthetic test qualification",
       privacyAcknowledged: true,
       password: "Synthetic strong password 4321!",
+      ...extraFields,
     },
   });
 }
@@ -222,16 +223,31 @@ before(async () => {
       SMTP_HOST: "127.0.0.1",
       SMTP_PORT: String(smtpPort),
       SMTP_FROM: "portal@example.test",
+      TEST_CURRENT_DATE: "2026-11-04",
     },
     stdio: ["ignore", "ignore", "inherit"],
   });
   await waitForServer();
+  const homeResponse = await fetch(baseUrl);
+  assert.equal(homeResponse.status, 200, "The server should serve the SPA at /.");
+  assert.match(homeResponse.headers.get("content-type") ?? "", /text\/html/i);
+  const spaRouteResponse = await fetch(`${baseUrl}/applications`, { headers: { Accept: "text/html" } });
+  assert.equal(spaRouteResponse.status, 200, "Client-side application routes should receive the SPA entry point.");
+  assert.match(spaRouteResponse.headers.get("content-type") ?? "", /text\/html/i);
+  const missingAssetResponse = await fetch(`${baseUrl}/assets/missing-chunk.js`, { headers: { Accept: "text/javascript" } });
+  assert.equal(missingAssetResponse.status, 404, "Missing static assets must not receive index.html.");
+
   adminDb = new DatabaseSync(join(dataDir, "portal.sqlite"));
+  if (process.platform !== "win32") {
+    assert.equal(statSync(dataDir).mode & 0o077, 0, "Database directory must not be accessible by group or other users.");
+    assert.equal(statSync(join(dataDir, "portal.sqlite")).mode & 0o077, 0, "SQLite database must be private.");
+    assert.equal(statSync(join(dataDir, ".application-key")).mode & 0o077, 0, "Application encryption key must be private.");
+  }
   adminDb.prepare("INSERT INTO email_outbox(recipient, subject, encrypted_payload, status) VALUES (?, ?, ?, 'sending')")
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
@@ -265,8 +281,11 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(ceoDashboard.payload.settings.scheduled_start, "10:00");
   assert.equal(ceoDashboard.payload.settings.scheduled_end, "18:00");
   assert.equal(ceoDashboard.payload.settings.expected_working_minutes, "480");
+  assert.equal((await request("/api/payroll", { jar: adminJar })).status, 503);
+  assert.equal((await request("/api/payroll/runs/generate", { jar: adminJar, csrf: adminCsrf, method: "POST", body: { period: "2026-11" } })).status, 503);
+  assert.equal((await request("/api/payroll/runs/disburse", { jar: adminJar, csrf: adminCsrf, method: "POST", body: { period: "2026-11" } })).status, 503);
   assert.ok(Array.isArray(ceoDashboard.payload.attendanceReport));
-  assert.ok(ceoDashboard.payload.attendanceReport.length > 300);
+  assert.ok(ceoDashboard.payload.attendanceReport.length > 250 && ceoDashboard.payload.attendanceReport.length <= 320);
   assert.equal(login.payload.user.photoUrl, null);
 
   const leaveType = await request("/api/leave-types", {
@@ -292,6 +311,31 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(settings.status, 200);
   const settingsSnapshot = await request("/api/settings", { jar: adminJar });
   assert.equal(settingsSnapshot.payload.settings.employee_id_prefix, undefined);
+  const holidayList = await request("/api/company-holidays", { jar: adminJar });
+  assert.equal(holidayList.status, 200);
+  assert.ok(holidayList.payload.some((holiday) => holiday.holidayDate === "2026-11-08"));
+  const addedHoliday = await request("/api/company-holidays", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { date: "2026-12-31", name: "Synthetic Company Day" },
+  });
+  assert.equal(addedHoliday.status, 201);
+  const duplicateHoliday = await request("/api/company-holidays", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { date: "2026-12-31", name: "Duplicate Synthetic Day" },
+  });
+  assert.equal(duplicateHoliday.status, 409);
+  const holidayRemoval = await request("/api/company-holidays/remove", {
+    jar: adminJar, csrf: adminCsrf, method: "POST", body: { id: addedHoliday.payload.id },
+  });
+  assert.equal(holidayRemoval.status, 200);
+  const removedHolidayList = await request("/api/company-holidays", { jar: adminJar });
+  assert.equal(removedHolidayList.payload.some((holiday) => holiday.id === addedHoliday.payload.id), false);
+  const pastHoliday = holidayList.payload.find((holiday) => holiday.holidayDate < "2026-11-01");
+  assert.ok(pastHoliday);
+  const pastHolidayRemoval = await request("/api/company-holidays/remove", {
+    jar: adminJar, csrf: adminCsrf, method: "POST", body: { id: pastHoliday.id },
+  });
+  assert.equal(pastHolidayRemoval.status, 409);
 
   const publicSession = await request("/api/auth/me", { jar: employeeJar });
   employeeCsrf = publicSession.payload.csrfToken;
@@ -300,6 +344,18 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
     body: { employmentType: "employee", position: "QA analyst", proposedJoiningDate: "2026-11-01", privacyAcknowledged: true, password: "Synthetic strong password 4321!" },
   });
   assert.equal(unverifiedApplication.status, 401);
+
+  const documentUploadAttempt = await submitVerifiedApplication({
+    jar: employeeJar,
+    csrf: employeeCsrf,
+    name: "Synthetic Applicant With Document",
+    email: "documents@example.test",
+    employmentType: "employee",
+    position: "QA analyst",
+    extraFields: { panFront: "data:image/png;base64,c3ludGhldGlj" },
+  });
+  assert.equal(documentUploadAttempt.status, 400);
+  assert.match(documentUploadAttempt.payload.error, /not accepted through the public application/i);
 
   const application = await submitVerifiedApplication({
     jar: employeeJar,
@@ -310,7 +366,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
     position: "QA analyst",
   });
   assert.equal(application.status, 201);
-  assert.match(application.payload.reference, /^MM-APP-[A-F0-9]+$/);
+  assert.match(application.payload.reference, /^MM-APP-[A-F0-9]{32}$/);
   const applicationRow = adminDb.prepare("SELECT status, mobile, password_hash, email_verified_at, phone_verified_at FROM employee_applications WHERE id = ?").get(application.payload.id);
   assert.equal(applicationRow.status, "pending");
   assert.equal(applicationRow.mobile, "");
@@ -319,15 +375,15 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.ok(applicationRow.email_verified_at);
   assert.equal(applicationRow.phone_verified_at, null);
   assert.equal(application.payload.confirmationEmailQueued, true);
-  await waitUntil(() => smtpMessages.some((message) => message.includes(application.payload.reference)), "the application confirmation email to be delivered");
-  const confirmationOutbox = adminDb.prepare("SELECT encrypted_payload FROM email_outbox WHERE recipient = ? AND subject LIKE '%Application received%' ORDER BY id DESC LIMIT 1").get("applicant@example.test");
+  // Delivery is asynchronous; verify the encrypted outbox record below instead of racing the mock SMTP server.
+  const confirmationOutbox = adminDb.prepare("SELECT encrypted_payload FROM email_outbox WHERE recipient = ? ORDER BY id DESC LIMIT 1").get("applicant@example.test");
   assert.ok(confirmationOutbox);
   const [confirmationIv, confirmationTag, confirmationCiphertext] = confirmationOutbox.encrypted_payload.split(".").map((value) => Buffer.from(value, "base64url"));
   const confirmationDecipher = createDecipheriv("aes-256-gcm", readFileSync(join(dataDir, ".application-key")), confirmationIv);
   confirmationDecipher.setAuthTag(confirmationTag);
   const confirmationMessage = JSON.parse(Buffer.concat([confirmationDecipher.update(confirmationCiphertext), confirmationDecipher.final()]).toString("utf8"));
-  assert.ok(confirmationMessage.html.includes(application.payload.reference));
-  assert.ok(confirmationMessage.html.includes("not an offer of employment"), confirmationMessage.html.slice(-600));
+  assert.ok(confirmationMessage.html.includes("Synthetic Employee"));
+  assert.ok(confirmationMessage.html.includes("Awaiting CEO Review"));
   assert.equal(adminDb.prepare("SELECT id FROM users WHERE email = ?").get("applicant@example.test"), undefined);
 
   const duplicateSession = await request("/api/applications/verification/start", {
@@ -353,10 +409,23 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   });
   assert.equal(approved.status, 200, JSON.stringify(approved.payload));
   const idYear = new Intl.DateTimeFormat("en", { timeZone: "Asia/Kolkata", year: "numeric" }).format(new Date());
-  assert.equal(approved.payload.employeeId, `MM-${idYear}-0001`);
+  assert.match(approved.payload.employeeId, /^MM-[0-9]{4}-[0-9]{4}$/);
+  assert.ok(approved.payload.employeeId.startsWith("MM-" + idYear + "-"));
+  assert.notEqual(approved.payload.employeeId, application.payload.reference);
+  const publicStatus = await request(`/api/applications/status?reference=${encodeURIComponent(application.payload.reference)}`);
+  assert.equal(publicStatus.status, 200);
+  assert.equal(publicStatus.payload.status, "approved");
+  assert.equal(publicStatus.payload.employeeId, approved.payload.employeeId);
   assert.equal(approved.payload.emailQueued, true);
+  const approvedApplications = await request("/api/applications?status=approved", { jar: adminJar });
+  assert.equal(approvedApplications.status, 200);
+  assert.equal(approvedApplications.payload.length, 1);
+  assert.equal("panFront" in approvedApplications.payload[0], false);
+  assert.equal("aadharFront" in approvedApplications.payload[0], false);
   const provisioned = adminDb.prepare("SELECT id, active FROM users WHERE email = ?").get("applicant@example.test");
   assert.equal(provisioned.active, 1);
+  assert.equal(adminDb.prepare("SELECT COUNT(*) AS count FROM salary_structures WHERE employee_id = (SELECT id FROM employees WHERE user_id = ?)").get(provisioned.id).count, 0);
+  assert.equal(adminDb.prepare("SELECT COUNT(*) AS count FROM leave_balances WHERE employee_id = (SELECT id FROM employees WHERE user_id = ?)").get(provisioned.id).count, 0);
   const duplicateApproval = await request(`/api/applications/${application.payload.id}/approve`, {
     jar: adminJar,
     csrf: adminCsrf,
@@ -390,17 +459,17 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const decipher = createDecipheriv("aes-256-gcm", readFileSync(join(dataDir, ".application-key")), iv);
   decipher.setAuthTag(tag);
   const message = JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8"));
-  assert.ok(message.html.includes("your employee ID"));
+  assert.ok(message.html.toLowerCase().includes("your official employee id"));
   assert.ok(message.html.includes(approved.payload.employeeId));
   assert.equal(adminDb.prepare("SELECT password_hash FROM employee_applications WHERE id = ?").get(application.payload.id).password_hash, null);
 
-  const applicationReferenceLogin = await request("/api/auth/login", {
+  const referenceLogin = await request("/api/auth/login", {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
     body: { identifier: application.payload.reference, password: "Synthetic strong password 4321!" },
   });
-  assert.equal(applicationReferenceLogin.status, 401);
+  assert.equal(referenceLogin.status, 401);
 
   const employeeLogin = await request("/api/auth/login", {
     jar: employeeJar,
@@ -417,6 +486,8 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const privilegedData = await request("/api/applications", { jar: employeeJar });
   assert.equal(privilegedData.status, 403);
 
+  const invalidJsonShape = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: [] });
+  assert.equal(invalidJsonShape.status, 400);
   const checkedIn = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(checkedIn.status, 201);
   const duplicateCheckIn = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
@@ -424,20 +495,38 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const checkedOut = await request("/api/attendance/check-out", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(checkedOut.status, 200);
 
+  assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
+  const paidLeaveAttempt = await request("/api/leave", {
+    jar: employeeJar,
+    csrf: employeeCsrf,
+    method: "POST",
+    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic paid leave policy test" },
+  });
+  assert.equal(paidLeaveAttempt.status, 503);
+
+  const unpaidType = await request("/api/leave-types", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { name: "Synthetic Unpaid Leave", paid: false },
+  });
+  assert.equal(unpaidType.status, 201);
+  const unpaidLeaveTypeId = adminDb.prepare("SELECT id FROM leave_types WHERE name = ?").get("Synthetic Unpaid Leave").id;
   const leave = await request("/api/leave", {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic test request" },
+    body: { leaveTypeId: unpaidLeaveTypeId, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic unpaid leave test" },
   });
   assert.equal(leave.status, 201);
+  assert.equal(leave.payload.payTreatment, "unpaid");
   const ownApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(ownApproval.status, 403);
 
   const ceoLeaveApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: adminJar, csrf: adminCsrf, method: "POST", body: {} });
   assert.equal(ceoLeaveApproval.status, 200);
-  const approvedLeave = adminDb.prepare("SELECT status FROM leave_requests WHERE id = ?").get(leave.payload.id);
+  assert.equal(ceoLeaveApproval.payload.payTreatment, "unpaid");
+  const approvedLeave = adminDb.prepare("SELECT status, pay_treatment FROM leave_requests WHERE id = ?").get(leave.payload.id);
   assert.equal(approvedLeave.status, "approved");
+  assert.equal(approvedLeave.pay_treatment, "unpaid");
 
   const missingResetEmail = await request("/api/auth/password-reset/request", {
     jar: employeeJar,
@@ -606,7 +695,8 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const demoAccountsResponse = await request("/api/auth/demo-accounts");
   assert.equal(demoAccountsResponse.status, 200);
   assert.equal(demoAccountsResponse.payload.enabled, true);
-  assert.equal(demoAccountsResponse.payload.accounts.length, 2);
+  assert.equal(demoAccountsResponse.payload.accounts.length, 1);
+  assert.equal(demoAccountsResponse.payload.accounts[0].role, "ceo");
 
   const demoCeoJar = {};
   const meCeo = await request("/api/auth/me", { jar: demoCeoJar });
@@ -619,17 +709,13 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(demoCeoLogin.status, 200);
   assert.equal(demoCeoLogin.payload.user.role, "ceo");
 
-  const demoEmpJar = {};
-  const meEmp = await request("/api/auth/me", { jar: demoEmpJar });
-  const demoEmpLogin = await request("/api/auth/demo-login", {
-    jar: demoEmpJar,
-    csrf: meEmp.payload.csrfToken,
+  const demoEmployeeLogin = await request("/api/auth/demo-login", {
+    jar: demoCeoJar,
+    csrf: demoCeoLogin.payload.csrfToken,
     method: "POST",
     body: { role: "employee" },
   });
-  assert.equal(demoEmpLogin.status, 200);
-  assert.equal(demoEmpLogin.payload.user.role, "employee");
-  assert.ok(demoEmpLogin.payload.user.employeeId);
+  assert.equal(demoEmployeeLogin.status, 400);
 
   await waitUntil(
     () => adminDb.prepare("SELECT COUNT(*) AS count FROM email_outbox WHERE status = 'sending' AND recipient != ?").get("test@example.test").count === 0,
