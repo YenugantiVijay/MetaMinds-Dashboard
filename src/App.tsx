@@ -2565,7 +2565,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
       setRows(leaveRows);
       setTypes(leaveTypes);
       setLeaveBalance(balanceData);
-      if (!form.leaveTypeId && leaveTypes[0]) setForm((current) => ({ ...current, leaveTypeId: String((leaveTypes.find((type) => !type.paid || balanceData !== null) || leaveTypes[0]).id) }));
+      if (leaveTypes[0]) setForm((current) => current.leaveTypeId ? current : ({ ...current, leaveTypeId: String((leaveTypes.find((type) => !type.paid || balanceData !== null) || leaveTypes[0]).id) }));
     } catch (error) { notify(error instanceof Error ? error.message : "Could not load leave requests.", "error"); }
     finally { setLoading(false); }
   }, [notify]);
