@@ -878,7 +878,7 @@ function Login({ onLogin, onRegister, onForgot, initialIdentifier }: { onLogin: 
                   <input
                     id="login-password"
                     name="employee_portal_signin_pw"
-                    autoComplete="new-password"
+                    autoComplete="current-password"
                     type={showPassword ? "text" : "password"}
                     required
                     readOnly={!userInteractedPassword}
