@@ -17,9 +17,15 @@ export function makeCompanyEmployeeId(year, code) {
   if (!Number.isInteger(year) || year < 2000 || year > 9999) {
     throw new Error("Employee ID year must be a four-digit year.");
   }
-  let codeStr = code !== undefined ? String(code).trim() : "";
-  if (!/^[1-9]{4}$/.test(codeStr)) {
+  let codeStr;
+  if (code === undefined) {
     codeStr = generateNonZero4Digits();
+  } else {
+    const suppliedCode = String(code).trim();
+    if (!/^\\d{1,4}$/.test(suppliedCode) || Number(suppliedCode) <= 0) {
+      throw new Error("Employee ID sequence must be a positive integer from 1 to 9999.");
+    }
+    codeStr = suppliedCode.padStart(4, "0");
   }
   return `MM-${year}-${codeStr}`;
 }
