@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import {
   Activity, ArrowDownToLine, ArrowUpRight, Bell, BriefcaseBusiness, CalendarDays, Camera, Check, Code, Compass, Copy,
   Cpu, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Eye, EyeOff, FileCheck2, FileText, Fingerprint,
-  Globe, GraduationCap, Layers, LayoutDashboard, Mail, LogOut, Menu, Palette, Search, Settings, Shield, ShieldCheck,
-  Sparkles, Terminal, Upload, Users, X, UserRound, Zap, ZoomIn,
+  Globe, Layers, LayoutDashboard, Mail, LogOut, Menu, Palette, Search, Settings, Shield, ShieldCheck,
+  Sparkles, Terminal, Upload, Users, X, UserRound, Zap,
 } from "lucide-react";
 
 import {
