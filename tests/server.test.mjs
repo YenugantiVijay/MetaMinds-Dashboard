@@ -226,12 +226,15 @@ before(async () => {
     stdio: ["ignore", "ignore", "inherit"],
   });
   await waitForServer();
+  const homeResponse = await fetch(baseUrl);
+  assert.equal(homeResponse.status, 200, "The server should serve the SPA at /.");
+  assert.match(homeResponse.headers.get("content-type") ?? "", /text\/html/i);
   adminDb = new DatabaseSync(join(dataDir, "portal.sqlite"));
   adminDb.prepare("INSERT INTO email_outbox(recipient, subject, encrypted_payload, status) VALUES (?, ?, ?, 'sending')")
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
