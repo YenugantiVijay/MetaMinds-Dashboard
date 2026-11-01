@@ -1325,7 +1325,7 @@ async function route(req, res, context, body, url) {
     let remaining = null;
     if (leaveType.paid) {
       const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
-      entitledDays = /^\\d{1,3}$/.test(configured) ? Number(configured) : null;
+      entitledDays = /^\d{1,3}$/.test(configured) ? Number(configured) : null;
       if (entitledDays === null || entitledDays > 365) {
         fail(503, "Paid leave is unavailable until the company approves and configures its annual paid-leave entitlement.");
       }
@@ -1394,7 +1394,7 @@ async function route(req, res, context, body, url) {
     const employee = getEmployeeForUser(user);
     const year = currentDateInZone().slice(0, 4);
     const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
-    const entitled = /^\\d{1,3}$/.test(configured) ? Number(configured) : null;
+    const entitled = /^\d{1,3}$/.test(configured) ? Number(configured) : null;
     if (entitled === null || entitled > 365) {
       fail(503, "Paid leave balances are unavailable until the company approves and configures its annual paid-leave entitlement.");
     }
@@ -1466,7 +1466,7 @@ async function route(req, res, context, body, url) {
     let finalPayTreatment = leaveType.paid ? (request.pay_treatment || "full_paid") : "unpaid";
     if (decision === "approved" && leaveType.paid) {
       const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
-      if (!/^\\d{1,3}$/.test(configured) || Number(configured) > 365) {
+      if (!/^\d{1,3}$/.test(configured) || Number(configured) > 365) {
         fail(503, "Paid leave approval is unavailable until the company configures its annual paid-leave entitlement.");
       }
       if (user.role === "ceo" && body.payTreatment && ["full_paid", "half_pay", "unpaid"].includes(body.payTreatment)) {
