@@ -2514,16 +2514,7 @@ function AttendancePage({ user, notify }: { user: User; notify: (message: string
   </div>;
 }
 
-const INDIAN_HOLIDAYS_SET = new Set([
-  "2025-01-26", "2025-03-14", "2025-03-31", "2025-04-14", "2025-04-18", "2025-05-01",
-  "2025-06-07", "2025-08-15", "2025-09-05", "2025-10-02", "2025-10-20", "2025-11-05",
-  "2025-12-25", "2026-01-26", "2026-03-04", "2026-03-21", "2026-04-03", "2026-04-14",
-  "2026-05-01", "2026-05-31", "2026-08-15", "2026-09-04", "2026-10-02", "2026-10-20",
-  "2026-11-08", "2026-11-24", "2026-12-25", "2027-01-26", "2027-03-23", "2027-08-15",
-  "2027-10-02", "2027-12-25"
-]);
-
-function calculateWorkingDaysClient(start: string, end: string): number {
+function calculateWorkingDaysClient(start: string, end: string, holidays: ReadonlySet<string> = new Set()): number {
   if (!start || !end || start > end) return 0;
   let count = 0;
   const cur = new Date(`${start}T12:00:00Z`);
@@ -2534,7 +2525,7 @@ function calculateWorkingDaysClient(start: string, end: string): number {
     const dateStr = cur.toISOString().slice(0, 10);
     const isSunday = dayOfWeek === 0;
     const isSecondSat = dayOfWeek === 6 && dayOfMonth >= 8 && dayOfMonth <= 14;
-    const isHoliday = INDIAN_HOLIDAYS_SET.has(dateStr);
+    const isHoliday = holidays.has(dateStr);
     if (!isSunday && !isSecondSat && !isHoliday) {
       count++;
     }
@@ -2547,6 +2538,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
   const [rows, setRows] = useState<Leave[]>([]);
   const [types, setTypes] = useState<Array<{ id: number; name: string; paid: number }>>([]);
   const [leaveBalance, setLeaveBalance] = useState<{ entitled: number; used: number; remaining: number } | null>(null);
+  const [companyHolidays, setCompanyHolidays] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ leaveTypeId: "", startDate: "", endDate: "", reason: "" });
   const [rejectId, setRejectId] = useState<number | null>(null);
@@ -2557,14 +2549,16 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [leaveRows, leaveTypes, balanceData] = await Promise.all([
+      const [leaveRows, leaveTypes, balanceData, holidayData] = await Promise.all([
         api<Leave[]>("/api/leave"),
         api<typeof types>("/api/leave-types"),
         api<{ entitled: number; used: number; remaining: number }>("/api/leave/balance").catch(() => null),
+        api<Array<{ id: number; holidayDate: string; name: string }>>("/api/company-holidays"),
       ]);
       setRows(leaveRows);
       setTypes(leaveTypes);
       setLeaveBalance(balanceData);
+      setCompanyHolidays(new Set(holidayData.map((holiday) => holiday.holidayDate)));
       if (leaveTypes[0]) setForm((current) => current.leaveTypeId ? current : ({ ...current, leaveTypeId: String((leaveTypes.find((type) => !type.paid || balanceData !== null) || leaveTypes[0]).id) }));
     } catch (error) { notify(error instanceof Error ? error.message : "Could not load leave requests.", "error"); }
     finally { setLoading(false); }
@@ -2607,7 +2601,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
   }
 
   const canReview = user.role === "ceo" || user.role === "team_lead";
-  const requestedWorkingDays = (form.startDate && form.endDate) ? calculateWorkingDaysClient(form.startDate, form.endDate) : 0;
+  const requestedWorkingDays = (form.startDate && form.endDate) ? calculateWorkingDaysClient(form.startDate, form.endDate, companyHolidays) : 0;
   const selectedLeaveType = types.find((type) => String(type.id) === form.leaveTypeId);
   const remainingQuota = leaveBalance?.remaining ?? 0;
   const isExcessRequest = selectedLeaveType?.paid === 1 && leaveBalance !== null && requestedWorkingDays > remainingQuota;
@@ -2676,7 +2670,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
         <div className="panel-heading">
           <div>
             <h2>Request time off</h2>
-            <p>Working days automatically exclude Sundays, 2nd Saturdays, and Indian Public Holidays.</p>
+            <p>Working days automatically exclude Sundays, second Saturdays and the company holiday calendar.</p>
           </div>
           <CalendarDays size={18} />
         </div>
@@ -2711,7 +2705,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
 
             {requestedWorkingDays > 0 && (
               <div className="working-days-preview">
-                📅 <strong>{requestedWorkingDays} working day(s)</strong> (excludes Sundays, 2nd Saturdays & Indian gazetted holidays)
+                📅 <strong>{requestedWorkingDays} working day(s)</strong> (excludes Sundays, 2nd Saturdays & configured company holidays)
               </div>
             )}
 
@@ -2779,7 +2773,7 @@ function LeavePage({ user, notify }: { user: User; notify: (message: string, kin
                   <td>{row.leaveType}</td>
                   <td>{formatDate(row.startDate)} – {formatDate(row.endDate)}</td>
                   <td>
-                    <strong>{row.workingDays ?? (row.startDate && row.endDate ? calculateWorkingDaysClient(row.startDate, row.endDate) : "—")}</strong> <small className="table-sub">day(s)</small>
+                    <strong>{row.workingDays ?? (row.startDate && row.endDate ? calculateWorkingDaysClient(row.startDate, row.endDate, companyHolidays) : "—")}</strong> <small className="table-sub">day(s)</small>
                   </td>
                   <td className="reason-cell">{row.reason}</td>
                   <td>
@@ -2907,11 +2901,19 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
   const [ceoNotificationConfigured, setCeoNotificationConfigured] = useState(false);
   const [pendingEmails, setPendingEmails] = useState(0);
   const [failedEmails, setFailedEmails] = useState(0);
+  const [holidays, setHolidays] = useState<Array<{ id: number; holidayDate: string; name: string }>>([]);
+  const [holidayDate, setHolidayDate] = useState("");
+  const [holidayName, setHolidayName] = useState("");
+  const [holidayBusy, setHolidayBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     try {
-      const result = await api<{ settings: Record<string, string>; emailConfigured: boolean; ceoNotificationConfigured: boolean; pendingEmails: number; failedEmails: number }>("/api/settings");
+      const [result, holidayRows] = await Promise.all([
+        api<{ settings: Record<string, string>; emailConfigured: boolean; ceoNotificationConfigured: boolean; pendingEmails: number; failedEmails: number }>("/api/settings"),
+        api<Array<{ id: number; holidayDate: string; name: string }>>("/api/company-holidays"),
+      ]);
+      setHolidays(holidayRows);
       setSettings(result.settings);
       setEmailConfigured(result.emailConfigured);
       setCeoNotificationConfigured(result.ceoNotificationConfigured);
@@ -2940,6 +2942,30 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
     } catch (error) { notify(error instanceof Error ? error.message : "Could not save company settings.", "error"); }
     finally { setBusy(false); }
   }
+  async function addHoliday() {
+    if (!holidayDate || !holidayName.trim()) {
+      notify("Enter a holiday date and name.", "error");
+      return;
+    }
+    setHolidayBusy(true);
+    try {
+      await api("/api/company-holidays", { method: "POST", body: JSON.stringify({ date: holidayDate, name: holidayName }) });
+      setHolidayDate("");
+      setHolidayName("");
+      notify("Company holiday added.");
+      await load();
+    } catch (error) { notify(error instanceof Error ? error.message : "Could not add company holiday.", "error"); }
+    finally { setHolidayBusy(false); }
+  }
+  async function removeHoliday(id: number) {
+    setHolidayBusy(true);
+    try {
+      await api("/api/company-holidays/remove", { method: "POST", body: JSON.stringify({ id }) });
+      notify("Company holiday removed.");
+      await load();
+    } catch (error) { notify(error instanceof Error ? error.message : "Could not remove company holiday.", "error"); }
+    finally { setHolidayBusy(false); }
+  }
   if (loading) return <LoadingState />;
   return (
     <div className="page-content">
@@ -2954,6 +2980,29 @@ function SettingsPage({ notify }: { notify: (message: string, kind?: "success" |
             <label>Expected workday hours<input type="number" min="0" max="24" step="0.25" value={settings.expected_working_minutes ? Number(settings.expected_working_minutes) / 60 : ""} onChange={(event) => change("expected_working_minutes", event.target.value ? String(Math.round(Number(event.target.value) * 60)) : "")} placeholder="8 hours" /><small>Current confirmed schedule: 10 AM–6 PM, Monday–Saturday.</small></label>
             <label>Manager review threshold<input required type="number" min="1" max="24" value={settings.absence_warning_hours || "3"} onChange={(event) => change("absence_warning_hours", event.target.value)} /><small>Employees receive hourly reminders from shift start; unresolved cases are flagged after this many hours. No automatic salary deduction.</small></label>
           </div>
+        </section>
+        <section className="panel settings-panel">
+          <div className="panel-heading"><div><h2>Company holiday calendar</h2><p>One shared calendar drives leave previews and server-side working-day calculations.</p></div><CalendarDays size={18} /></div>
+          <div className="settings-grid">
+            <label>Holiday date<input type="date" value={holidayDate} onChange={(event) => setHolidayDate(event.target.value)} /></label>
+            <label>Holiday name<input maxLength={120} value={holidayName} onChange={(event) => setHolidayName(event.target.value)} placeholder="e.g. Company Foundation Day" /></label>
+            <div className="settings-holiday-action"><Button type="button" disabled={holidayBusy || !holidayDate || !holidayName.trim()} onClick={() => void addHoliday()}>Add company holiday</Button></div>
+          </div>
+          {holidays.length ? (
+            <div className="table-scroll">
+              <table>
+                <thead><tr><th>Date</th><th>Holiday</th><th>Action</th></tr></thead>
+                <tbody>{holidays.map((holiday) => (
+                  <tr key={holiday.id}>
+                    <td>{formatDate(holiday.holidayDate)}</td>
+                    <td>{holiday.name}</td>
+                    <td><Button type="button" variant="quiet" disabled={holidayBusy || holiday.holidayDate <= new Date().toISOString().slice(0, 10)} onClick={() => void removeHoliday(holiday.id)}>Remove</Button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          ) : <EmptyState title="No company holidays configured" detail="Add company holidays to keep leave previews and approvals aligned." icon={<CalendarDays size={22} />} />}
+          <p className="settings-footnote">Past and current holidays are locked to preserve historical leave calculations. New and future holidays can be managed here.</p>
         </section>
         <section className="panel settings-panel">
           <div className="panel-heading"><div><h2>Employee ID format</h2><p>Assigned once, after CEO approval, using the approval year and unguessable non-zero digits.</p></div><Fingerprint size={18} /></div>
