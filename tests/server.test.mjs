@@ -230,6 +230,12 @@ before(async () => {
   const homeResponse = await fetch(baseUrl);
   assert.equal(homeResponse.status, 200, "The server should serve the SPA at /.");
   assert.match(homeResponse.headers.get("content-type") ?? "", /text\/html/i);
+  const spaRouteResponse = await fetch(`${baseUrl}/applications`, { headers: { Accept: "text/html" } });
+  assert.equal(spaRouteResponse.status, 200, "Client-side application routes should receive the SPA entry point.");
+  assert.match(spaRouteResponse.headers.get("content-type") ?? "", /text\/html/i);
+  const missingAssetResponse = await fetch(`${baseUrl}/assets/missing-chunk.js`, { headers: { Accept: "text/javascript" } });
+  assert.equal(missingAssetResponse.status, 404, "Missing static assets must not receive index.html.");
+
   adminDb = new DatabaseSync(join(dataDir, "portal.sqlite"));
   adminDb.prepare("INSERT INTO email_outbox(recipient, subject, encrypted_payload, status) VALUES (?, ?, ?, 'sending')")
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
@@ -449,6 +455,8 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const privilegedData = await request("/api/applications", { jar: employeeJar });
   assert.equal(privilegedData.status, 403);
 
+  const invalidJsonShape = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: [] });
+  assert.equal(invalidJsonShape.status, 400);
   const checkedIn = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(checkedIn.status, 201);
   const duplicateCheckIn = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
