@@ -38,13 +38,6 @@ type Application = {
   proposedJoiningDate: string;
   discussedSalary?: string;
   education: string;
-  education10thDoc?: string | null;
-  educationInterDoc?: string | null;
-  educationHigherDoc?: string | null;
-  panFront?: string | null;
-  panBack?: string | null;
-  aadharFront?: string | null;
-  aadharBack?: string | null;
   status: string;
   rejectionReason?: string;
   createdAt: string;
@@ -983,103 +976,6 @@ function Login({ onLogin, onRegister, onForgot, initialIdentifier }: { onLogin: 
   );
 }
 
-function DocumentUploadBox({
-  label,
-  helper,
-  value,
-  onChange,
-  required = false,
-  icon = <FileText size={18} />,
-}: {
-  label: string;
-  helper: string;
-  value?: string | null;
-  onChange: (dataUrl: string) => void;
-  required?: boolean;
-  icon?: ReactNode;
-}) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-
-  function handleFile(file?: File) {
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      alert("File size exceeds 5MB limit. Please upload a smaller file.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      onChange(reader.result as string);
-    };
-    reader.readAsDataURL(file);
-  }
-
-  return (
-    <div className={`doc-box ${value ? "doc-box-active" : ""} ${dragOver ? "doc-box-dragover" : ""}`}>
-      <div className="doc-box-header">
-        <span className="doc-box-title-wrap">
-          <span className="doc-icon-chip">{icon}</span>
-          <span className="doc-title">{label} {required && <b className="required-star">*</b>}</span>
-        </span>
-        {value ? (
-          <span className="doc-status-ready"><Check size={13} /> Attached</span>
-        ) : (
-          <span className="doc-status-pending">Required</span>
-        )}
-      </div>
-      <p className="doc-box-helper">{helper}</p>
-
-      {value ? (
-        <div className="doc-preview-card">
-          {value.startsWith("data:image/") ? (
-            <img src={value} alt={label} className="doc-preview-thumb" />
-          ) : (
-            <div className="doc-pdf-fallback"><FileText size={28} /><span>PDF Document</span></div>
-          )}
-          <div className="doc-preview-meta">
-            <span className="doc-preview-success">Document loaded & ready for verification</span>
-            <div className="doc-preview-buttons">
-              <button type="button" className="text-button" onClick={() => fileInputRef.current?.click()}>
-                Replace file
-              </button>
-              <button type="button" className="text-button text-danger" onClick={() => onChange("")}>
-                Remove
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div
-          className="doc-dropzone"
-          onClick={() => fileInputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            const file = e.dataTransfer.files?.[0];
-            if (file) handleFile(file);
-          }}
-        >
-          <Upload size={18} />
-          <span>Click or drag image / PDF (JPG, PNG, PDF max 5MB)</span>
-        </div>
-      )}
-
-      <input
-        type="file"
-        ref={fileInputRef}
-        accept="image/*,application/pdf"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
-        }}
-      />
-    </div>
-  );
-}
-
 function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (submission: { reference: string; email: string; fullName: string; position: string; emailQueued: boolean }) => void }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
@@ -1095,13 +991,6 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
     proposedJoiningDate: "",
     discussedSalary: "",
     education: "",
-    education10thDoc: "",
-    educationInterDoc: "",
-    educationHigherDoc: "",
-    panFront: "",
-    panBack: "",
-    aadharFront: "",
-    aadharBack: "",
     password: "",
     confirmPassword: "",
     privacyAcknowledged: false,
@@ -1241,24 +1130,9 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
         setStep(4);
         return;
       }
-      // Step 4: Final submission with KYC & documents
-      if (!form.education10thDoc) {
-        throw new Error("Please upload your 10th standard marksheet / certificate.");
-      }
-      if (!form.educationInterDoc) {
-        throw new Error("Please upload your Intermediate / 12th / Diploma certificate.");
-      }
-      if (!form.educationHigherDoc) {
-        throw new Error("Please upload your higher qualification / degree certificate.");
-      }
-      if (!form.panFront || !form.panBack) {
-        throw new Error("Please upload both front and back sides of your PAN card.");
-      }
-      if (!form.aadharFront || !form.aadharBack) {
-        throw new Error("Please upload both front and back sides of your Aadhaar card.");
-      }
+      // Step 4: Submit without collecting identity documents.
       if (!form.privacyAcknowledged) {
-        throw new Error("Please certify the accuracy of your details and KYC documents.");
+        throw new Error("Please acknowledge the application privacy notice before submitting.");
       }
       const result = await api<{ reference: string; confirmationEmailQueued: boolean; fullName?: string; email?: string; position?: string }>("/api/applications", {
         method: "POST",
@@ -1272,13 +1146,6 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
           proposedJoiningDate: form.proposedJoiningDate || new Date().toISOString().slice(0, 10),
           discussedSalary: form.discussedSalary,
           education: form.education,
-          education10thDoc: form.education10thDoc || undefined,
-          educationInterDoc: form.educationInterDoc || undefined,
-          educationHigherDoc: form.educationHigherDoc || undefined,
-          panFront: form.panFront || undefined,
-          panBack: form.panBack || undefined,
-          aadharFront: form.aadharFront || undefined,
-          aadharBack: form.aadharBack || undefined,
           privacyAcknowledged: form.privacyAcknowledged,
           password: form.password,
           photoUrl: form.photoUrl || undefined,
@@ -1348,8 +1215,8 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
           <span className="round-icon"><BriefcaseBusiness size={20} /></span>
           <div>
             <p className="eyebrow">METAMINDS PVT. LTD. · EMPLOYEE ONBOARDING</p>
-            <h1>Employee Registration & KYC</h1>
-            <p>Provide your personal details, role preferences, and verification documents. Applications are reviewed directly by the CEO.</p>
+            <h1>Employee Application</h1>
+            <p>Provide your contact details, role preferences and application information. Applications are reviewed directly by the CEO.</p>
           </div>
         </div>
 
@@ -1371,7 +1238,7 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
           <i className={step >= 4 ? "step-connector-active" : ""} aria-hidden="true" />
           <div className={`step-item ${step === 4 ? "step-active" : ""}`} role="listitem">
             <span className="step-number">4</span>
-            <span className="step-copy"><small>STEP 04</small><strong>KYC & Documents</strong></span>
+            <span className="step-copy"><small>STEP 04</small><strong>Review & Submit</strong></span>
           </div>
         </div>
 
@@ -1515,7 +1382,7 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
               <label className="full-width">
                 <span>Discussed Monthly Salary (₹ INR) <b>*</b></span>
                 <input required maxLength={50} value={form.discussedSalary} onChange={(event) => update("discussedSalary", event.target.value)} placeholder="e.g. ₹60,000 / month or 60000" />
-                <small className="field-help">Monthly compensation agreed during interview. Upon CEO approval, this automatically provisions your salary structure (50% Basic, 30% HRA, 20% Special) in the live Payroll register.</small>
+                <small className="field-help">Monthly compensation discussed during the interview for CEO review. This does not create a payroll structure or authorize payment.</small>
               </label>
 
               {/* Explicit hidden username field with applicant email so browsers never associate position with password */}
@@ -1618,81 +1485,17 @@ function Register({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: (s
 
           {step === 4 && (
             <>
-              <div className="full-width kyc-notice-box">
-                <ShieldCheck size={20} />
-                <div>
-                  <strong>Mandatory KYC & Educational Verification</strong>
-                  <p>In accordance with MetaMinds company policy, all joining members must submit their 10th marksheet, intermediate certificate, higher degree, PAN card, and Aadhaar card for authorized CEO review.</p>
-                </div>
+              <div className="full-width notice notice-info">
+                <ShieldCheck size={19} />
+                <span>For privacy and data minimization, identity documents (including PAN and Aadhaar) are not collected in this public application. If documents are required later, the company must request them through an approved secure process with access and retention controls.</span>
               </div>
-
               <label className="full-width">
                 <span>Highest Educational Qualification Summary</span>
-                <textarea rows={2} maxLength={500} value={form.education} onChange={(event) => update("education", event.target.value)} placeholder="e.g. B.Tech in Computer Science from Anna University (CGPA: 8.9, 2020-2024)" />
+                <textarea rows={3} maxLength={1000} value={form.education} onChange={(event) => update("education", event.target.value)} placeholder="e.g. B.Tech in Computer Science, institution and graduation year" />
               </label>
-
-              <div className="full-width doc-grid">
-                <DocumentUploadBox
-                  label="10th Standard Certificate / Marksheet"
-                  helper="Secondary school completion marksheet showing date of birth and scores."
-                  value={form.education10thDoc}
-                  onChange={(val) => update("education10thDoc", val)}
-                  required
-                  icon={<GraduationCap size={18} />}
-                />
-                <DocumentUploadBox
-                  label="Intermediate / 12th / Diploma Certificate"
-                  helper="Higher secondary (10+2) or polytechnic diploma certificate."
-                  value={form.educationInterDoc}
-                  onChange={(val) => update("educationInterDoc", val)}
-                  required
-                  icon={<GraduationCap size={18} />}
-                />
-                <DocumentUploadBox
-                  label="Higher Qualification / Degree Certificate"
-                  helper="Bachelor's, Master's, or highest completed degree certificate."
-                  value={form.educationHigherDoc}
-                  onChange={(val) => update("educationHigherDoc", val)}
-                  required
-                  icon={<GraduationCap size={18} />}
-                />
-                <DocumentUploadBox
-                  label="PAN Card (Front Side)"
-                  helper="Clear image of PAN card front showing Name, Photo, and PAN Number."
-                  value={form.panFront}
-                  onChange={(val) => update("panFront", val)}
-                  required
-                  icon={<CreditCard size={18} />}
-                />
-                <DocumentUploadBox
-                  label="PAN Card (Back Side)"
-                  helper="Clear image of PAN card back side."
-                  value={form.panBack}
-                  onChange={(val) => update("panBack", val)}
-                  required
-                  icon={<CreditCard size={18} />}
-                />
-                <DocumentUploadBox
-                  label="Aadhaar Card (Front Side)"
-                  helper="Aadhaar card front side showing photo and 12-digit UID."
-                  value={form.aadharFront}
-                  onChange={(val) => update("aadharFront", val)}
-                  required
-                  icon={<ShieldCheck size={18} />}
-                />
-                <DocumentUploadBox
-                  label="Aadhaar Card (Back Side)"
-                  helper="Aadhaar card back side showing official residential address."
-                  value={form.aadharBack}
-                  onChange={(val) => update("aadharBack", val)}
-                  required
-                  icon={<ShieldCheck size={18} />}
-                />
-              </div>
-
               <label className="consent-row full-width">
                 <input required type="checkbox" checked={form.privacyAcknowledged} onChange={(event) => update("privacyAcknowledged", event.target.checked)} />
-                <span>I certify that all details, salary agreements, and uploaded KYC documents (10th, Inter, Degree, PAN & Aadhaar) are authentic, accurate, and submitted for authorized employment review. I understand my account becomes active only upon CEO approval. <b>*</b></span>
+                <span>I confirm that the information in this application is accurate and acknowledge that it will be used to review my application and contact me about its outcome. <b>*</b></span>
               </label>
             </>
           )}
@@ -2357,7 +2160,6 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("pending");
   const [selected, setSelected] = useState<Application | null>(null);
-  const [inspectingDoc, setInspectingDoc] = useState<{ title: string; url: string } | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -2406,8 +2208,8 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
         );
         setSelected({ ...selected, status: "approved", employeeId: result.employeeId, activationUrl: result.activationUrl });
         notify(result.emailQueued
-          ? `Application approved. Employee ID: ${result.employeeId}. Salary structure initialized & approval email queued.`
-          : `Application approved. Employee ID: ${result.employeeId}. Salary structure initialized. SMTP is unavailable; applicant was not emailed.`);
+          ? `Application approved. Employee ID: ${result.employeeId}. Approval email queued.`
+          : `Application approved. Employee ID: ${result.employeeId}. SMTP is unavailable; applicant was not emailed.`);
       } else {
         const result = await api<{ emailQueued: boolean }>(
           `/api/applications/${selected.id}/reject`,
@@ -2435,21 +2237,11 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
     }
   }
 
-  const kycDocs = selected ? [
-    { title: "10th Standard Marksheet / Certificate", url: selected.education10thDoc, icon: <GraduationCap size={16} /> },
-    { title: "Intermediate / 12th / Diploma Certificate", url: selected.educationInterDoc, icon: <GraduationCap size={16} /> },
-    { title: "Degree / Higher Qualification Certificate", url: selected.educationHigherDoc, icon: <GraduationCap size={16} /> },
-    { title: "PAN Card (Front Side)", url: selected.panFront, icon: <CreditCard size={16} /> },
-    { title: "PAN Card (Back Side)", url: selected.panBack, icon: <CreditCard size={16} /> },
-    { title: "Aadhaar Card (Front Side)", url: selected.aadharFront, icon: <ShieldCheck size={16} /> },
-    { title: "Aadhaar Card (Back Side)", url: selected.aadharBack, icon: <ShieldCheck size={16} /> },
-  ] : [];
-
   return (
     <div className="page-content">
       <PageHeader
-        title="Employee Applications & KYC"
-        subtitle="Review onboarding submissions, verify KYC & educational records, and approve employee credentials."
+        title="Employee Applications"
+        subtitle="Review onboarding submissions and approve employee credentials. Identity documents are not collected in the public application."
         action={<span className="count-chip">{filteredRows.length} {filter}</span>}
       />
       <div className="filter-bar">
@@ -2460,7 +2252,6 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
               onClick={() => {
                 setFilter(status);
                 setSelected(null);
-                setInspectingDoc(null);
               }}
               key={status}
             >
@@ -2605,51 +2396,8 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
                 <Sparkles size={18} className="text-primary" />
                 <div>
                   <strong>Agreed Monthly Compensation: {selected.discussedSalary || "Not specified"}</strong>
-                  <p>Upon CEO approval, a formal salary structure is automatically generated in the live Payroll register (50% Basic, 30% HRA, 20% Special Allowance) for this employee.</p>
+                  <p>This amount is recorded as interview context only. No salary structure is generated until compensation terms and applicable policies are approved and configured.</p>
                 </div>
-              </div>
-            </div>
-
-            {/* KYC & Document Gallery */}
-            <div className="kyc-section modal-detail-wide">
-              <div className="kyc-section-header">
-                <h3>Uploaded KYC & Educational Certificates</h3>
-                <span className="kyc-badge">{kycDocs.filter(d => Boolean(d.url)).length} / 7 Documents Uploaded</span>
-              </div>
-
-              <div className="kyc-docs-grid">
-                {kycDocs.map((doc, idx) => (
-                  <div key={idx} className={`kyc-doc-card ${doc.url ? "kyc-doc-ready" : "kyc-doc-empty"}`}>
-                    <div className="kyc-doc-top">
-                      <span className="kyc-doc-icon">{doc.icon}</span>
-                      <strong className="kyc-doc-name">{doc.title}</strong>
-                      {doc.url ? (
-                        <span className="doc-chip-ready"><Check size={12} /> Ready</span>
-                      ) : (
-                        <span className="doc-chip-missing">Missing</span>
-                      )}
-                    </div>
-                    {doc.url ? (
-                      <div className="kyc-doc-action-row">
-                        {doc.url.startsWith("data:image/") ? (
-                          <img src={doc.url} alt={doc.title} className="kyc-doc-thumb" />
-                        ) : (
-                          <div className="kyc-doc-pdf-chip"><FileText size={20} /><span>PDF File</span></div>
-                        )}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="kyc-inspect-btn"
-                          onClick={() => setInspectingDoc({ title: doc.title, url: doc.url! })}
-                        >
-                          <ZoomIn size={14} /> View Document
-                        </Button>
-                      </div>
-                    ) : (
-                      <p className="kyc-doc-none">No file uploaded for this requirement.</p>
-                    )}
-                  </div>
-                ))}
               </div>
             </div>
 
@@ -2685,44 +2433,6 @@ function ApplicationsPage({ notify }: { notify: (message: string, kind?: "succes
         </div>
       )}
 
-      {/* Full Document Inspector Modal */}
-      {inspectingDoc && (
-        <div
-          className="modal-backdrop inspector-modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setInspectingDoc(null); }}
-        >
-          <div className="doc-inspector-card" role="dialog" aria-modal="true">
-            <div className="doc-inspector-header">
-              <div>
-                <p className="eyebrow">KYC DOCUMENT VIEWER</p>
-                <h3>{inspectingDoc.title}</h3>
-                <p>{selected?.name} · MetaMinds Verification</p>
-              </div>
-              <button className="icon-button" onClick={() => setInspectingDoc(null)} aria-label="Close document viewer">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="doc-inspector-content">
-              {inspectingDoc.url.startsWith("data:image/") ? (
-                <img src={inspectingDoc.url} alt={inspectingDoc.title} className="doc-inspector-img" />
-              ) : (
-                <iframe src={inspectingDoc.url} title={inspectingDoc.title} className="doc-inspector-frame" />
-              )}
-            </div>
-            <div className="doc-inspector-footer">
-              <a
-                href={inspectingDoc.url}
-                download={`${selected?.name || "Applicant"}_${inspectingDoc.title.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                className="button button-secondary"
-              >
-                Download Document
-              </a>
-              <Button onClick={() => setInspectingDoc(null)}>Close Viewer</Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
