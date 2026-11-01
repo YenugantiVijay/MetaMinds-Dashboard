@@ -30,6 +30,11 @@ try {
     if (process.platform !== "win32") throw chmodError;
   }
 }
+try {
+  chmodSync(keyPath, 0o600);
+} catch (error) {
+  if (process.platform !== "win32") throw error;
+}
 
 export { dataDir, encryptionKey };
 
