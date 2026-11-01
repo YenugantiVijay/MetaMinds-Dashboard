@@ -609,7 +609,8 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const demoAccountsResponse = await request("/api/auth/demo-accounts");
   assert.equal(demoAccountsResponse.status, 200);
   assert.equal(demoAccountsResponse.payload.enabled, true);
-  assert.equal(demoAccountsResponse.payload.accounts.length, 2);
+  assert.equal(demoAccountsResponse.payload.accounts.length, 1);
+  assert.equal(demoAccountsResponse.payload.accounts[0].role, "ceo");
 
   const demoCeoJar = {};
   const meCeo = await request("/api/auth/me", { jar: demoCeoJar });
@@ -622,17 +623,13 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(demoCeoLogin.status, 200);
   assert.equal(demoCeoLogin.payload.user.role, "ceo");
 
-  const demoEmpJar = {};
-  const meEmp = await request("/api/auth/me", { jar: demoEmpJar });
-  const demoEmpLogin = await request("/api/auth/demo-login", {
-    jar: demoEmpJar,
-    csrf: meEmp.payload.csrfToken,
+  const demoEmployeeLogin = await request("/api/auth/demo-login", {
+    jar: demoCeoJar,
+    csrf: demoCeoLogin.payload.csrfToken,
     method: "POST",
     body: { role: "employee" },
   });
-  assert.equal(demoEmpLogin.status, 200);
-  assert.equal(demoEmpLogin.payload.user.role, "employee");
-  assert.ok(demoEmpLogin.payload.user.employeeId);
+  assert.equal(demoEmployeeLogin.status, 400);
 
   await waitUntil(
     () => adminDb.prepare("SELECT COUNT(*) AS count FROM email_outbox WHERE status = 'sending' AND recipient != ?").get("test@example.test").count === 0,
