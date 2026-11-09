@@ -82,27 +82,6 @@ export function App() {
       });
   }, []);
 
-  async function demoLogin(role: "ceo") {
-    try {
-      const result = await api<{ user: User; csrfToken: string }>("/api/auth/demo-login", {
-        method: "POST",
-        body: JSON.stringify({ role }),
-      });
-      setUser(result.user);
-      setSection("overview");
-      notify("Signed in as CEO (Executive Portal)");
-    } catch {
-      const identifier = "demo.ceo@metaminds.local";
-      const result = await api<{ user: User; csrfToken: string }>("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ identifier, password: "Demo@Password123" }),
-      });
-      setUser(result.user);
-      setSection("overview");
-      notify("Signed in as CEO (Executive Portal)");
-    }
-  }
-
   async function login(identifier: string, password: string) {
     const result = await api<{ user: User; csrfToken: string }>("/api/auth/login", {
       method: "POST",
@@ -184,7 +163,6 @@ export function App() {
       <>
         <Login
           onLogin={login}
-          onDemoLogin={demoLogin}
           onRegister={() => setPublicPage("register")}
           onForgot={() => setResetMode(true)}
           initialIdentifier={prefilledIdentifier}
