@@ -492,7 +492,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(checkedIn.status, 201);
   const duplicateCheckIn = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(duplicateCheckIn.status, 409);
-  const checkedOut = await request("/api/attendance/check-out", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
+  const checkedOut = await request("/api/attendance/check-out", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." } });
   assert.equal(checkedOut.status, 200);
 
   assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
