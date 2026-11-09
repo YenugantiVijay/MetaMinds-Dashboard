@@ -201,7 +201,7 @@ test("First Saturday check-in is permitted for working schedule", async () => {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: firstSat,
   });
 });
@@ -224,7 +224,7 @@ test("Third Saturday check-in is permitted for working schedule", async () => {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: thirdSat,
   });
 });
@@ -247,13 +247,16 @@ test("Fourth Saturday check-in is permitted for working schedule", async () => {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: fourthSat,
   });
 });
 
 test("Company holiday check-in is rejected with configured holiday name", async () => {
-  const holidayDate = "2026-11-09";
+  // Choose a future Wednesday so this case remains valid as calendar time advances.
+  const future = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000);
+  while (future.getUTCDay() !== 3) future.setUTCDate(future.getUTCDate() + 1);
+  const holidayDate = future.toISOString().slice(0, 10);
   // CEO configures holiday
   const holidayCreate = await request("/api/company-holidays", {
     jar: adminJar,
@@ -311,7 +314,7 @@ test("Normal weekday check-in and check-out work end-to-end with duplicate prote
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: weekday,
   });
   assert.equal(checkOut.status, 200);
@@ -322,7 +325,7 @@ test("Normal weekday check-in and check-out work end-to-end with duplicate prote
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: weekday,
   });
   assert.equal(dupCheckOut.status, 409);
@@ -339,7 +342,7 @@ test("Check-out without an active session is rejected", async () => {
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: dateWithoutSession,
   });
 
@@ -366,7 +369,7 @@ test("Existing valid open session can be safely completed on a Sunday/holiday (e
     jar: employeeJar,
     csrf: employeeCsrf,
     method: "POST",
-    body: {},
+    body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." },
     testDate: sunday,
   });
 

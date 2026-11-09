@@ -7,7 +7,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import type { DailyWorkReport, NotifyFn, User } from "../../types";
+import type { AutoWorkReport, DailyWorkReport, NotifyFn, User } from "../../types";
 import { api, durationLabel, formatDate, formatTime } from "../../services/api";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingState } from "../../components/ui/LoadingState";
@@ -20,6 +20,7 @@ export interface DailyWorkReportsViewProps {
 
 export function DailyWorkReportsView({ user, notify, timezone = "Asia/Kolkata" }: DailyWorkReportsViewProps) {
   const [reports, setReports] = useState<DailyWorkReport[]>([]);
+  const [automaticReports, setAutomaticReports] = useState<AutoWorkReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState("");
@@ -32,8 +33,12 @@ export function DailyWorkReportsView({ user, notify, timezone = "Asia/Kolkata" }
       if (dateFilter) params.set("date", dateFilter);
       if (search.trim()) params.set("employeeId", search.trim());
       const query = params.toString() ? `?${params.toString()}` : "";
-      const data = await api<DailyWorkReport[]>(`/api/daily-work-reports${query}`);
+      const [data, automation] = await Promise.all([
+        api<DailyWorkReport[]>(`/api/daily-work-reports${query}`),
+        api<AutoWorkReport[]>("/api/attendance/auto-reports"),
+      ]);
       setReports(data);
+      setAutomaticReports(automation.filter((item) => item.status !== "submitted"));
     } catch (error) {
       notify(error instanceof Error ? error.message : "Unable to load daily work reports.", "error");
     } finally {
@@ -58,6 +63,33 @@ export function DailyWorkReportsView({ user, notify, timezone = "Asia/Kolkata" }
 
   return (
     <div className="daily-work-reports-view">
+      {user.role !== "employee" && automaticReports.length > 0 && (
+        <section className="panel" aria-labelledby="pending-auto-report-heading" style={{ marginBottom: 18 }}>
+          <div className="panel-heading">
+            <div>
+              <h2 id="pending-auto-report-heading">Automatic Check-Out Reports</h2>
+              <p>Pending employee work summaries. Attendance has already been closed.</p>
+            </div>
+            <span className="panel-badge">{automaticReports.length} pending</span>
+          </div>
+          <div className="table-scroll">
+            <table className="work-reports-table">
+              <thead><tr><th>Employee</th><th>Work date</th><th>Active hours</th><th>Due date</th><th>Status</th></tr></thead>
+              <tbody>
+                {automaticReports.map((entry) => (
+                  <tr key={entry.attendanceRecordId}>
+                    <td><strong>{entry.employeeName}</strong><small className="table-sub">{entry.employeeCode}</small></td>
+                    <td>{formatDate(entry.workDate)}</td>
+                    <td>{durationLabel(entry.activeWorkMinutes)}</td>
+                    <td>{new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: timezone }).format(new Date(entry.dueAt))}</td>
+                    <td><span className="status-pill">{entry.status === "overdue" ? "Overdue" : "Pending"}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {/* Search and Filters */}
       <div className="reports-filter-bar">
         <div className="reports-search-wrap">

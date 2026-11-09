@@ -36,7 +36,7 @@ export type Application = {
   photoUrl?: string | null;
 };
 
-export type CheckoutReason = "workday_complete" | "leaving_early" | "other";
+export type CheckoutReason = "workday_complete" | "leaving_early" | "other" | "automatic_timeout";
 
 export type DailyWorkReport = {
   id: number;
@@ -56,6 +56,19 @@ export type DailyWorkReport = {
 };
 
 export type AttendanceSessionStatus = "active" | "on_break" | "completed";
+export type AutoWorkReport = {
+  attendanceRecordId: number;
+  workDate: string;
+  checkIn: string;
+  checkOut: string;
+  dueAt: string;
+  status: "pending" | "overdue" | "submitted";
+  submittedAt?: string | null;
+  employeeName?: string;
+  employeeCode?: string;
+  activeWorkMinutes?: number;
+  breakMinutes?: number;
+};
 
 export type Attendance = {
   id?: number;
@@ -71,6 +84,9 @@ export type Attendance = {
   break_minutes?: number;
   status?: AttendanceSessionStatus;
   activeBreakStart?: string | null;
+  activeWorkMinutes?: number | null;
+  elapsedSessionMinutes?: number | null;
+  autoCheckoutAt?: string | null;
   checkoutReason?: CheckoutReason | null;
   checkout_reason?: CheckoutReason | null;
   checkoutNote?: string | null;
@@ -125,6 +141,15 @@ export type Dashboard = {
   recentApplications?: Array<{ reference: string; name: string; employmentType: string; status: string; createdAt: string }>;
   attendance?: Attendance | Attendance[] | null;
   attendanceDayPolicy?: AttendanceDayPolicy;
+  attendanceAutomation?: {
+    standardWorkMinutes: number;
+    warningAfterElapsedMinutes: number;
+    autoCloseAfterElapsedMinutes: number;
+    activeWorkMinutes?: number | null;
+    elapsedSessionMinutes?: number | null;
+    autoCheckoutAt?: string | null;
+  };
+  pendingAutoReports?: AutoWorkReport[];
   pendingLeaves?: number;
   leaveBalance?: {
     entitled: number;

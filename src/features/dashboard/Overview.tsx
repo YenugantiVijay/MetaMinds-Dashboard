@@ -29,6 +29,7 @@ import { UserAvatar } from "../../components/ui/UserAvatar";
 import { WorkHoursLollipopChart, type WorkHoursItem } from "../../WorkHoursLollipopChart";
 import { AttendanceReportCard, type AttendanceDayItem, type AttendanceReportStatus } from "../../AttendanceReportCard";
 import { CheckOutModal } from "../attendance/CheckOutModal";
+import { PendingAutoReport } from "../attendance/PendingAutoReport";
 import type { CheckoutReason } from "../../types";
 import { Coffee, Play } from "lucide-react";
 import { AttendanceTable } from "../attendance/AttendanceTable";
@@ -100,11 +101,9 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
         setLiveElapsedMinutes(employeeAttendance.workedMinutes ?? 0);
         return;
       }
-      const diff = Math.max(
-        0,
-        Math.floor((Date.now() - new Date(employeeAttendance.checkIn!).getTime()) / 60000)
-      );
-      setLiveElapsedMinutes(diff);
+      const elapsed = Math.max(0, Math.floor((Date.now() - new Date(employeeAttendance.checkIn!).getTime()) / 60000));
+      // Active-work progress excludes tracked breaks; 9/10-hour limits use elapsed time.
+      setLiveElapsedMinutes(Math.max(0, elapsed - (employeeAttendance.breakMinutes ?? 0)));
     };
     updateElapsed();
     const interval = setInterval(updateElapsed, 5000);
@@ -175,6 +174,7 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
       await reload();
     } catch (error) {
       notify(error instanceof Error ? error.message : "Attendance could not be updated.", "error");
+      throw error; // Keep checkout dialog open and retain the employee's summary.
     } finally {
       setBusy(false);
     }
@@ -786,7 +786,7 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
             </div>
             <div className="time-divider" />
             <div>
-              <small>{isOnBreak ? "ELAPSED WORK" : "WORKED"}</small>
+              <small>{isOnBreak ? "ACTIVE WORK" : "WORKED"}</small>
               <strong>{durationLabel(currentWorkedMins)}</strong>
             </div>
             {Boolean(todayAttendance?.breakMinutes && todayAttendance.breakMinutes > 0) && (
@@ -801,6 +801,20 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
               </>
             )}
           </div>
+          {todayAttendance?.checkIn && !isCompleted && data?.attendanceAutomation && (
+            <div className="notice notice-info compact-notice" role="status" style={{ marginTop: 12, marginBottom: 12 }}>
+              <Clock3 size={17} aria-hidden="true" />
+              <span>
+                <strong>{currentWorkedMins !== null && currentWorkedMins >= 480
+                  ? "Eight active work hours completed"
+                  : `Active work: ${durationLabel(currentWorkedMins)} / 8h target`}</strong>
+                <small style={{ display: "block" }}>
+                  A reminder is sent after 9 elapsed hours. An open session automatically closes after 10 elapsed hours,
+                  including breaks.
+                </small>
+              </span>
+            </div>
+          )}
           <div className="attendance-actions">
             {!todayAttendance ? (
               <Button
@@ -861,7 +875,7 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
           )}
           {isCompleted && todayAttendance?.checkoutReason && (
             <p style={{ fontSize: "12px", color: "#64748b", margin: "10px 0 0", textAlign: "center" }}>
-              Finalized ({todayAttendance.checkoutReason === "leaving_early" ? "Leaving Early" : todayAttendance.checkoutReason === "other" ? "Other Reason" : "Workday Complete"}).
+              Finalized ({todayAttendance.checkoutReason === "automatic_timeout" ? "Automatically checked out — report required" : todayAttendance.checkoutReason === "leaving_early" ? "Leaving Early" : todayAttendance.checkoutReason === "other" ? "Other Reason" : "Workday Complete"}).
             </p>
           )}
           {!isWorkingDay && !isWorking && !isOnBreak && !isCompleted && (
@@ -890,6 +904,7 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
           </div>
         </section>
       </div>
+      <PendingAutoReport reports={data?.pendingAutoReports ?? []} notify={notify} onSubmitted={reload} timezone={data?.settings?.timezone} />
       <OverviewCharts data={data} chartPeriod={chartPeriod} onPeriodChange={setChartPeriod} />
       <CheckOutModal
         isOpen={checkoutModalOpen}

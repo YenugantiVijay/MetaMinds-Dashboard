@@ -247,7 +247,7 @@ before(async () => {
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
@@ -492,7 +492,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(checkedIn.status, 201);
   const duplicateCheckIn = await request("/api/attendance/check-in", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(duplicateCheckIn.status, 409);
-  const checkedOut = await request("/api/attendance/check-out", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
+  const checkedOut = await request("/api/attendance/check-out", { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: { reason: "workday_complete", workSummary: "Completed scheduled work and documented project progress." } });
   assert.equal(checkedOut.status, 200);
 
   assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
@@ -722,3 +722,62 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   );
 });
 
+
+test("automatic checkout reports require owner authorization and preserve recorded time", async () => {
+  // Use a fresh session because previous tests intentionally invalidate old cookies.
+  const reportJar = {};
+  const reportSession = await request("/api/auth/me", { jar: reportJar });
+  const reportLogin = await request("/api/auth/login", {
+    jar: reportJar,
+    csrf: reportSession.payload.csrfToken,
+    method: "POST",
+    body: { identifier: "applicant@example.test", password: "Test-only replacement password 2468!" },
+  });
+  assert.equal(reportLogin.status, 200);
+  const reportCsrf = reportLogin.payload.csrfToken;
+  const employee = adminDb.prepare("SELECT id FROM employees WHERE user_id = (SELECT id FROM users WHERE email = ?)").get("applicant@example.test");
+  assert.ok(employee);
+  const checkIn = "2026-12-16T04:30:00.000Z";
+  const checkOut = "2026-12-16T14:30:00.000Z";
+  const saved = adminDb.prepare(`
+    INSERT INTO attendance_records(employee_id, attendance_date, check_in, check_out, worked_minutes, break_minutes, status, checkout_reason)
+    VALUES (?, '2026-12-16', ?, ?, 600, 0, 'completed', 'automatic_timeout')
+  `).run(employee.id, checkIn, checkOut);
+  const attendanceRecordId = Number(saved.lastInsertRowid);
+  adminDb.prepare(`
+    INSERT INTO attendance_automation(attendance_record_id, auto_closed_at, report_due_at)
+    VALUES (?, ?, '2026-12-17T18:29:00.000Z')
+  `).run(attendanceRecordId, checkOut);
+
+  const invalid = await request("/api/attendance/auto-report", {
+    jar: reportJar, csrf: reportCsrf, method: "POST",
+    body: { attendanceRecordId, workSummary: "Too short" },
+  });
+  assert.equal(invalid.status, 400);
+
+  const pending = await request("/api/attendance/auto-reports", { jar: reportJar });
+  assert.equal(pending.status, 200);
+  assert.ok(pending.payload.some((row) => row.attendanceRecordId === attendanceRecordId && row.status !== "submitted"));
+
+  const submitted = await request("/api/attendance/auto-report", {
+    jar: reportJar, csrf: reportCsrf, method: "POST",
+    body: {
+      attendanceRecordId,
+      workSummary: "Completed scheduled work and reviewed the daily attendance flows.",
+      projectReference: "MetaMinds portal",
+    },
+  });
+  assert.equal(submitted.status, 201);
+  const second = await request("/api/attendance/auto-report", {
+    jar: reportJar, csrf: reportCsrf, method: "POST",
+    body: { attendanceRecordId, workSummary: "Attempting to replace a previously submitted daily report." },
+  });
+  assert.equal(second.status, 409);
+  assert.equal(adminDb.prepare("SELECT check_out FROM attendance_records WHERE id = ?").get(attendanceRecordId).check_out, checkOut);
+  const summary = adminDb.prepare("SELECT work_summary FROM daily_work_reports WHERE attendance_record_id = ?").get(attendanceRecordId);
+  assert.match(summary.work_summary, /Completed scheduled work/);
+
+  const management = await request("/api/attendance/auto-reports", { jar: adminJar });
+  assert.equal(management.status, 200);
+  assert.ok(management.payload.some((row) => row.attendanceRecordId === attendanceRecordId && row.status === "submitted"));
+});
