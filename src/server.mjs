@@ -1445,7 +1445,7 @@ async function route(req, res, context, body, url) {
     }
 
     const existingOpen = db.prepare("SELECT id FROM attendance_records WHERE employee_id = ? AND check_out IS NULL LIMIT 1").get(employee.id);
-    if (existingOpen) fail(409, "You already have an open attendance session. Complete or correct it before checking in again.");
+    if (existingOpen) fail(409, "You are already checked in to an active session. Complete or correct it before checking in again.");
     const now = timestamp();
     try {
       db.prepare("INSERT INTO attendance_records(employee_id, attendance_date, check_in, status) VALUES (?, ?, ?, 'active')").run(employee.id, date, now);
