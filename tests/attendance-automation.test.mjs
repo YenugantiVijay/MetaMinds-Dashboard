@@ -116,6 +116,13 @@ test("overdue-report notices are sent once and do not alter attendance", () => {
     audit: (...a) => f.audits.push(a), timezone: "Asia/Kolkata", now: deadlinePassed,
   });
   assert.equal(first.overdue, 1);
+  const afterFirst = f.db.prepare("SELECT overdue_notified_at FROM attendance_automation WHERE attendance_record_id=17").get();
+  assert.ok(afterFirst.overdue_notified_at);
+  const noticesBefore = f.notifications.length;
+  // Restarting the worker against the same persisted database cannot notify twice.
+  const second = f.run(2000);
+  assert.equal(second.overdue, 0);
+  assert.equal(f.notifications.length, noticesBefore);
   assert.equal(f.db.prepare("SELECT checkout_reason FROM attendance_records WHERE id=17").get().checkout_reason, "automatic_timeout");
   f.db.close();
 });
