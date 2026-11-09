@@ -247,7 +247,7 @@ before(async () => {
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
