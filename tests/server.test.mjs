@@ -722,3 +722,51 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   );
 });
 
+
+test("automatic checkout reports require owner authorization and preserve recorded time", async () => {
+  const employee = adminDb.prepare("SELECT id FROM employees WHERE user_id = (SELECT id FROM users WHERE email = ?)").get("applicant@example.test");
+  assert.ok(employee);
+  const checkIn = "2026-12-16T04:30:00.000Z";
+  const checkOut = "2026-12-16T14:30:00.000Z";
+  const saved = adminDb.prepare(`
+    INSERT INTO attendance_records(employee_id, attendance_date, check_in, check_out, worked_minutes, break_minutes, status, checkout_reason)
+    VALUES (?, '2026-12-16', ?, ?, 600, 0, 'completed', 'automatic_timeout')
+  `).run(employee.id, checkIn, checkOut);
+  const attendanceRecordId = Number(saved.lastInsertRowid);
+  adminDb.prepare(`
+    INSERT INTO attendance_automation(attendance_record_id, auto_closed_at, report_due_at)
+    VALUES (?, ?, '2026-12-17T18:29:00.000Z')
+  `).run(attendanceRecordId, checkOut);
+
+  const invalid = await request("/api/attendance/auto-report", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: { attendanceRecordId, workSummary: "Too short" },
+  });
+  assert.equal(invalid.status, 400);
+
+  const pending = await request("/api/attendance/auto-reports", { jar: employeeJar });
+  assert.equal(pending.status, 200);
+  assert.ok(pending.payload.some((row) => row.attendanceRecordId === attendanceRecordId && row.status !== "submitted"));
+
+  const submitted = await request("/api/attendance/auto-report", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: {
+      attendanceRecordId,
+      workSummary: "Completed scheduled work and reviewed the daily attendance flows.",
+      projectReference: "MetaMinds portal",
+    },
+  });
+  assert.equal(submitted.status, 201);
+  const second = await request("/api/attendance/auto-report", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: { attendanceRecordId, workSummary: "Attempting to replace a previously submitted daily report." },
+  });
+  assert.equal(second.status, 409);
+  assert.equal(adminDb.prepare("SELECT check_out FROM attendance_records WHERE id = ?").get(attendanceRecordId).check_out, checkOut);
+  const summary = adminDb.prepare("SELECT work_summary FROM daily_work_reports WHERE attendance_record_id = ?").get(attendanceRecordId);
+  assert.match(summary.work_summary, /Completed scheduled work/);
+
+  const management = await request("/api/attendance/auto-reports", { jar: adminJar });
+  assert.equal(management.status, 200);
+  assert.ok(management.payload.some((row) => row.attendanceRecordId === attendanceRecordId && row.status === "submitted"));
+});
