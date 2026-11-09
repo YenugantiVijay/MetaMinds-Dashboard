@@ -21,6 +21,7 @@ import {
 } from "./domain.mjs";
 import { applicationApprovedEmail, applicationOtpEmail, applicationSubmittedEmail } from "./email-templates.mjs";
 import { DEMO_CREDENTIALS, ensureDemoAccounts } from "./demo-accounts.mjs";
+import { runAttendanceAutomation, ATTENDANCE_TARGET_MINUTES, ATTENDANCE_WARNING_ELAPSED_MINUTES, ATTENDANCE_MAX_ELAPSED_MINUTES } from "./attendance-automation.mjs";
 
 const port = Number(process.env.PORT || 3001);
 const appUrl = new URL(process.env.APP_URL || "http://localhost:5173");
@@ -585,11 +586,20 @@ function buildDashboard(user, context) {
     totalBreakMinutes = breakSumRow?.total || 0;
   }
 
-  // Live real-time worked minutes calculation
+  // New attendance policy: active-work duration excludes recorded breaks.
+  // Historical completed records retain their original stored minute totals.
+  const elapsedSessionMinutes = attendance
+    ? Math.max(0, Math.floor(((attendance.check_out ? Date.parse(attendance.check_out) : Date.now()) - Date.parse(attendance.check_in)) / 60000))
+    : null;
   const liveWorkedMinutes = attendance
     ? (attendance.check_out
         ? (attendance.worked_minutes ?? 0)
-        : Math.max(0, Math.floor((Date.now() - Date.parse(attendance.check_in)) / 60000)))
+        : Math.max(0, elapsedSessionMinutes - totalBreakMinutes))
+    : null;
+  const automationStart = db.prepare("SELECT activated_at FROM attendance_automation_policy WHERE id = 1").get()?.activated_at;
+  const automationEligible = attendance && automationStart && attendance.check_in >= automationStart;
+  const autoCheckoutAt = automationEligible
+    ? new Date(Date.parse(attendance.check_in) + ATTENDANCE_MAX_ELAPSED_MINUTES * 60_000).toISOString()
     : null;
 
   const sessionStatus = attendance
@@ -609,6 +619,9 @@ function buildDashboard(user, context) {
         breakMinutes: totalBreakMinutes,
         break_minutes: totalBreakMinutes,
         activeBreakStart: activeBreak?.break_start ?? null,
+        activeWorkMinutes: liveWorkedMinutes,
+        elapsedSessionMinutes,
+        autoCheckoutAt,
         progress,
       }
     : null;
@@ -625,7 +638,7 @@ function buildDashboard(user, context) {
     SELECT attendance_date AS date, 1 AS present,
       CASE
         WHEN worked_minutes IS NOT NULL THEN worked_minutes
-        WHEN check_out IS NULL THEN MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER))
+        WHEN check_out IS NULL THEN MAX(0, CAST((julianday('now') - julianday(check_in)) * 1440 AS INTEGER) - COALESCE(break_minutes, 0))
         ELSE 0
       END AS averageMinutes,
       status,
@@ -766,6 +779,24 @@ function buildDashboard(user, context) {
     leaveTypes: db.prepare("SELECT id, name, paid FROM leave_types WHERE active = 1 ORDER BY name").all(),
     leaves,
     leaveBalance,
+    attendanceAutomation: {
+      standardWorkMinutes: ATTENDANCE_TARGET_MINUTES,
+      warningAfterElapsedMinutes: ATTENDANCE_WARNING_ELAPSED_MINUTES,
+      autoCloseAfterElapsedMinutes: ATTENDANCE_MAX_ELAPSED_MINUTES,
+      activeWorkMinutes: liveWorkedMinutes,
+      elapsedSessionMinutes,
+      autoCheckoutAt,
+    },
+    pendingAutoReports: db.prepare(`
+      SELECT r.id AS attendanceRecordId, r.attendance_date AS workDate,
+             r.check_in AS checkIn, r.check_out AS checkOut,
+             a.report_due_at AS dueAt,
+             CASE WHEN a.report_due_at < ? THEN 'overdue' ELSE 'pending' END AS status
+      FROM attendance_records r
+      JOIN attendance_automation a ON a.attendance_record_id = r.id
+      WHERE r.employee_id = ? AND a.auto_closed_at IS NOT NULL AND a.report_submitted_at IS NULL
+      ORDER BY r.attendance_date DESC LIMIT 10
+    `).all(timestamp(), employee.id),
     todayWorkReport: attendance?.id ? db.prepare(`
       SELECT id, work_summary AS workSummary, project_reference AS projectReference,
              blockers, submitted_at AS submittedAt
@@ -1405,6 +1436,8 @@ async function route(req, res, context, body, url) {
       fail(403, dayPolicy.message);
     }
 
+    const existingOpen = db.prepare("SELECT id FROM attendance_records WHERE employee_id = ? AND check_out IS NULL LIMIT 1").get(employee.id);
+    if (existingOpen) fail(409, "You already have an open attendance session. Complete or correct it before checking in again.");
     const now = timestamp();
     try {
       db.prepare("INSERT INTO attendance_records(employee_id, attendance_date, check_in, status) VALUES (?, ?, ?, 'active')").run(employee.id, date, now);
@@ -1494,10 +1527,10 @@ async function route(req, res, context, body, url) {
     if (record.check_out) fail(409, "You have already checked out for today.");
 
     const validReasons = ["workday_complete", "leaving_early", "other"];
-    let reason = "workday_complete";
-    if (typeof body.reason === "string" && validReasons.includes(body.reason)) {
-      reason = body.reason;
+    if (typeof body.reason !== "string" || !validReasons.includes(body.reason)) {
+      fail(400, "Select a valid check-out reason.");
     }
+    const reason = body.reason;
 
     let workSummary = null;
     let projectReference = null;
@@ -1505,11 +1538,7 @@ async function route(req, res, context, body, url) {
     let note = null;
 
     if (reason === "workday_complete") {
-      if (body.reason === "workday_complete" || body.workSummary !== undefined) {
-        workSummary = requiredString(body.workSummary, "Daily work summary", 2000, 20);
-      } else {
-        workSummary = "Workday completed shift.";
-      }
+      workSummary = requiredString(body.workSummary, "Daily work summary", 2000, 20);
       if (typeof body.projectReference === "string" && body.projectReference.trim()) {
         projectReference = body.projectReference.trim().slice(0, 255);
       }
@@ -1537,7 +1566,7 @@ async function route(req, res, context, body, url) {
       `).get(record.id);
       totalBreakMinutes = breakSumRow?.total || 0;
 
-      minutes = workedMinutes(record.check_in, now);
+      minutes = workedMinutes(record.check_in, now, totalBreakMinutes);
       db.prepare(`
         UPDATE attendance_records
         SET check_out = ?, worked_minutes = ?, break_minutes = ?, checkout_reason = ?, checkout_note = ?, status = 'completed'
@@ -1569,6 +1598,63 @@ async function route(req, res, context, body, url) {
         status: "completed",
       },
     };
+  }
+  if (method === "POST" && path === "/api/attendance/auto-report") {
+    const user = requireUser(context);
+    const employee = getEmployeeForUser(user);
+    const attendanceId = Number(body.attendanceRecordId);
+    if (!Number.isSafeInteger(attendanceId) || attendanceId <= 0) fail(400, "Select a valid attendance record.");
+    const summary = requiredString(body.workSummary, "Daily work summary", 2000, 20);
+    const projectReference = typeof body.projectReference === "string" ? body.projectReference.trim().slice(0, 255) || null : null;
+    const blockers = typeof body.blockers === "string" ? body.blockers.trim().slice(0, 1000) || null : null;
+    const record = db.prepare(`
+      SELECT r.id, r.employee_id, r.attendance_date, r.checkout_reason,
+             a.auto_closed_at, a.report_submitted_at
+      FROM attendance_records r
+      JOIN attendance_automation a ON a.attendance_record_id = r.id
+      WHERE r.id = ? AND r.employee_id = ?
+    `).get(attendanceId, employee.id);
+    if (!record || record.checkout_reason !== "automatic_timeout" || !record.auto_closed_at) {
+      fail(404, "An automatic check-out report was not found for your account.");
+    }
+    if (record.report_submitted_at) fail(409, "This daily work report has already been submitted.");
+    const submittedAt = timestamp();
+    withTransaction(() => {
+      const updated = db.prepare(`
+        UPDATE attendance_automation SET report_submitted_at = ?
+        WHERE attendance_record_id = ? AND report_submitted_at IS NULL
+      `).run(submittedAt, record.id);
+      if (updated.changes !== 1) fail(409, "This daily work report has already been submitted.");
+      db.prepare(`
+        INSERT INTO daily_work_reports(employee_id, attendance_record_id, work_date,
+          work_summary, project_reference, blockers, submitted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(employee.id, record.id, record.attendance_date, summary, projectReference, blockers, submittedAt);
+      audit(user.user_id, "attendance.auto_work_report_submitted", "attendance_record", record.id);
+    });
+    return { status: 201, body: { ok: true, attendanceRecordId: record.id, submittedAt } };
+  }
+  if (method === "GET" && path === "/api/attendance/auto-reports") {
+    const user = requireUser(context);
+    const visibleIds = user.role === "ceo" ? null : listVisibleEmployees(user).map((employee) => employee.id);
+    if (visibleIds && !visibleIds.length) return { status: 200, body: [] };
+    const placeholders = visibleIds ? visibleIds.map(() => "?").join(",") : "";
+    const scope = visibleIds ? `AND r.employee_id IN (${placeholders})` : "";
+    const rows = db.prepare(`
+      SELECT r.id AS attendanceRecordId, r.attendance_date AS workDate,
+             e.full_name AS employeeName, e.employee_id AS employeeCode,
+             r.check_in AS checkIn, r.check_out AS checkOut,
+             r.worked_minutes AS activeWorkMinutes, r.break_minutes AS breakMinutes,
+             a.report_due_at AS dueAt, a.report_submitted_at AS submittedAt,
+             CASE WHEN a.report_submitted_at IS NOT NULL THEN 'submitted'
+                  WHEN a.report_due_at < ? THEN 'overdue' ELSE 'pending' END AS status
+      FROM attendance_automation a
+      JOIN attendance_records r ON r.id = a.attendance_record_id
+      JOIN employees e ON e.id = r.employee_id
+      WHERE a.auto_closed_at IS NOT NULL ${scope}
+      ORDER BY r.attendance_date DESC LIMIT 100
+    `).all(timestamp(), ...(visibleIds ?? []));
+    return { status: 200, body: rows };
   }
   if (method === "GET" && (path === "/api/daily-work-reports" || path === "/api/attendance/reports")) {
     const user = requireUser(context);
@@ -2326,6 +2412,15 @@ setInterval(() => {
     runAttendanceExceptions();
   } catch (error) {
     console.error("Attendance exception processing failed", { error: error.code ?? "JOB_ERROR" });
+  }
+  try {
+    runAttendanceAutomation({
+      db, withTransaction, notifyUser, queueEmail, audit,
+      timezone: getSetting("timezone") || "Asia/Kolkata",
+      holidays: getCompanyHolidaysMap(),
+    });
+  } catch (error) {
+    console.error("Automatic attendance processing failed", { error: error.code ?? "JOB_ERROR" });
   }
   void drainOutbox();
 }, 60_000).unref();
