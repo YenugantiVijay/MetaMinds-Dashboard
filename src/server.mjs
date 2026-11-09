@@ -1166,29 +1166,28 @@ async function route(req, res, context, body, url) {
     return { status: 200, body: { user: safeUser(context.user), csrfToken: context.csrf } };
   }
   if (method === "GET" && path === "/api/auth/demo-accounts") {
-    return {
-      status: 200,
-      body: {
-        enabled: !isProduction,
-        accounts: [{
-          role: "ceo",
-          title: "CEO & Executive Portal",
-          email: DEMO_CREDENTIALS.ceo.email,
-          password: DEMO_CREDENTIALS.ceo.password,
-          badge: "Executive Leadership",
-          description: "Workforce metrics, employee approvals, audit trails, and company policies",
-        }],
-      },
-    };
+    const enabled = !isProduction && process.env.DEMO_LOGIN_ENABLED === "true";
+    return { status: 200, body: {
+      enabled,
+      accounts: enabled ? [{
+        role: "ceo",
+        title: "CEO & Executive Portal",
+        email: DEMO_CREDENTIALS.ceo.email,
+        badge: "Executive Leadership",
+        description: "Workforce metrics, employee approvals, audit trails, and company policies",
+      }] : [],
+    } };
   }
   if (method === "POST" && path === "/api/auth/demo-login") {
-    if (isProduction) fail(403, "Demo sign in is not available in production.");
-    const role = body.role === "ceo" ? "ceo" : null;
-    if (!role) fail(400, "Valid demo role ('ceo') is required.");
-    ensureDemoAccounts();
-    const targetEmail = DEMO_CREDENTIALS.ceo.email;
-    const user = db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE AND active = 1").get(targetEmail);
-    if (!user) fail(500, "Demo account could not be initialized.");
+    const localOrigin = ["localhost", "127.0.0.1", "[::1]"].includes(appUrl.hostname);
+    const address = req.socket?.remoteAddress ?? "";
+    const localConnection = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address);
+    if (isProduction || process.env.DEMO_LOGIN_ENABLED !== "true" || !localOrigin || !localConnection) {
+      fail(403, "Demo sign-in is not available.");
+    }
+    if (body.role !== "ceo") fail(400, "Invalid demo role.");
+    const user = db.prepare("SELECT * FROM users WHERE email = ? COLLATE NOCASE AND active = 1").get(DEMO_CREDENTIALS.ceo.email);
+    if (!user || user.role !== "ceo") fail(404, "Demo CEO account is not configured.");
     if (context.jar.mm_session) db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash(context.jar.mm_session));
     const session = makeSession(res, user.id);
     audit(user.id, "auth.demo_login", "user", user.id);
@@ -1208,20 +1207,9 @@ async function route(req, res, context, body, url) {
         OR (? = 'employee' AND u.email = 'demo.employee@metaminds.local')
       ) LIMIT 1
     `).get(identifier, identifier, identifier, identifier);
-    if (!user) {
-      const pendingApp = db.prepare(`
-        SELECT reference, status, rejection_reason FROM employee_applications
-        WHERE (reference = ? COLLATE NOCASE OR email = ? COLLATE NOCASE)
-        ORDER BY id DESC LIMIT 1
-      `).get(identifier, identifier);
-
-      if (pendingApp) {
-        if (pendingApp.status === "pending") {
-          fail(403, `Application ${pendingApp.reference} is currently awaiting review and approval by the CEO. You can sign in immediately once approved.`);
-        } else if (pendingApp.status === "rejected") {
-          fail(403, `Application ${pendingApp.reference} was not approved. ${pendingApp.rejection_reason ? "Reason: " + pendingApp.rejection_reason : ""}`);
-        }
-      }
+    if (!user) fail(401, "Email/employee ID or password is incorrect.");
+    // The reserved development identity must not authenticate in production.
+    if (isProduction && user.email.toLowerCase() === DEMO_CREDENTIALS.ceo.email) {
       fail(401, "Email/employee ID or password is incorrect.");
     }
     if (!user.active || !user.password_hash || !verifyPassword(password, user.password_hash)) {
