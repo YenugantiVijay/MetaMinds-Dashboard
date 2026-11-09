@@ -253,7 +253,10 @@ test("Fourth Saturday check-in is permitted for working schedule", async () => {
 });
 
 test("Company holiday check-in is rejected with configured holiday name", async () => {
-  const holidayDate = "2026-11-09";
+  // Choose a future Wednesday so this case remains valid as calendar time advances.
+  const future = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000);
+  while (future.getUTCDay() !== 3) future.setUTCDate(future.getUTCDate() + 1);
+  const holidayDate = future.toISOString().slice(0, 10);
   // CEO configures holiday
   const holidayCreate = await request("/api/company-holidays", {
     jar: adminJar,
