@@ -786,7 +786,7 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
             </div>
             <div className="time-divider" />
             <div>
-              <small>{isOnBreak ? "ELAPSED WORK" : "WORKED"}</small>
+              <small>{isOnBreak ? "ACTIVE WORK" : "WORKED"}</small>
               <strong>{durationLabel(currentWorkedMins)}</strong>
             </div>
             {Boolean(todayAttendance?.breakMinutes && todayAttendance.breakMinutes > 0) && (
