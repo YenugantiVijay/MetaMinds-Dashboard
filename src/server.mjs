@@ -1519,9 +1519,9 @@ async function route(req, res, context, body, url) {
     return { status: 200, body: { breakEnd: now, breakMinutes: totalBreakMinutes, status: "active" } };
   }
   if (method === "POST" && path === "/api/attendance/check-out") {
+    const user = requireUser(context);
     // Resolve expired sessions before manual finalization: no check-out after cutoff.
     runAutomationTick();
-    const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const settings = settingsObject();
     const zone = settings.timezone || "Asia/Kolkata";
