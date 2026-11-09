@@ -4,7 +4,6 @@ import { hashPassword } from "./domain.mjs";
 export const DEMO_CREDENTIALS = {
   ceo: {
     email: "demo.ceo@metaminds.local",
-    password: "Demo@Password123",
     role: "ceo",
     name: "Executive CEO",
     title: "Chief Executive Officer",
@@ -12,16 +11,19 @@ export const DEMO_CREDENTIALS = {
 };
 
 export function ensureDemoAccounts() {
-  const passwordHash = hashPassword(DEMO_CREDENTIALS.ceo.password);
-
   db.exec("BEGIN IMMEDIATE");
   try {
-    // 1. Ensure CEO account
-    const existingCeo = db.prepare("SELECT id FROM users WHERE email = ? COLLATE NOCASE").get(DEMO_CREDENTIALS.ceo.email);
-    if (existingCeo) {
-      db.prepare("UPDATE users SET password_hash = ?, active = 1, role = 'ceo' WHERE id = ?").run(passwordHash, existingCeo.id);
-    } else {
-      db.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)").run(DEMO_CREDENTIALS.ceo.email, passwordHash);
+    // Never silently reset an existing CEO password, role, or active state.
+    const existingCeo = db.prepare("SELECT id, role FROM users WHERE email = ? COLLATE NOCASE").get(DEMO_CREDENTIALS.ceo.email);
+    if (existingCeo && existingCeo.role !== "ceo") throw new Error("Reserved demo identity has an unexpected role.");
+    // New demo creation requires explicit local setup; no source-controlled credentials.
+    if (!existingCeo && process.env.NODE_ENV !== "production" && process.env.DEMO_SETUP_ENABLED === "true") {
+      const password = process.env.DEMO_CEO_PASSWORD;
+      if (typeof password !== "string" || password.length < 16) {
+        throw new Error("Explicit demo setup requires a private DEMO_CEO_PASSWORD of at least 16 characters.");
+      }
+      db.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
+        .run(DEMO_CREDENTIALS.ceo.email, hashPassword(password));
     }
 
     // 2. Ensure Departments & Teams
