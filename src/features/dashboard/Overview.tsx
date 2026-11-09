@@ -904,7 +904,7 @@ export function Overview({ user, notify, onNavigate }: OverviewProps) {
           </div>
         </section>
       </div>
-      <PendingAutoReport reports={data?.pendingAutoReports ?? []} notify={notify} onSubmitted={reload} />
+      <PendingAutoReport reports={data?.pendingAutoReports ?? []} notify={notify} onSubmitted={reload} timezone={data?.settings?.timezone} />
       <OverviewCharts data={data} chartPeriod={chartPeriod} onPeriodChange={setChartPeriod} />
       <CheckOutModal
         isOpen={checkoutModalOpen}
