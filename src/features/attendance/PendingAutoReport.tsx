@@ -8,9 +8,10 @@ type Props = {
   reports: AutoWorkReport[];
   notify: NotifyFn;
   onSubmitted: () => Promise<void>;
+  timezone?: string;
 };
 
-export function PendingAutoReport({ reports, notify, onSubmitted }: Props) {
+export function PendingAutoReport({ reports, notify, onSubmitted, timezone = "Asia/Kolkata" }: Props) {
   const report = reports[0];
   const [summary, setSummary] = useState("");
   const [project, setProject] = useState("");
@@ -60,7 +61,10 @@ export function PendingAutoReport({ reports, notify, onSubmitted }: Props) {
       <div className="panel-heading">
         <div>
           <h2 id="auto-report-heading"><FileText size={18} aria-hidden="true" /> Daily work report required</h2>
-          <p>Automatic checkout recorded on {formatDate(report.workDate)}. Your attendance time is already saved.</p>
+          <p>
+            Automatic checkout recorded on {formatDate(report.workDate)}. Your attendance time is already saved.
+            Report due {new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: timezone }).format(new Date(report.dueAt))}.
+          </p>
         </div>
         <span className="panel-badge" aria-label={report.status === "overdue" ? "Report overdue" : "Report pending"}>
           {report.status === "overdue" ? "Overdue" : "Pending"}
