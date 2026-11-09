@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS attendance_automation (
   warning_notified_at TEXT,
   auto_closed_at TEXT,
   report_due_at TEXT,
-  report_submitted_at TEXT
+  report_submitted_at TEXT,
+  overdue_notified_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_attendance_auto_pending
   ON attendance_automation(report_due_at, report_submitted_at)
