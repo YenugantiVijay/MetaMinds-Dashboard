@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import {
-  runAttendanceAutomation, sessionDurations,
+  runAttendanceAutomation, sessionDurations, nextWorkingDayDeadline,
   ATTENDANCE_TARGET_MINUTES, ATTENDANCE_WARNING_ELAPSED_MINUTES,
   ATTENDANCE_MAX_ELAPSED_MINUTES,
 } from "../src/attendance-automation.mjs";
@@ -118,4 +118,11 @@ test("overdue-report notices are sent once and do not alter attendance", () => {
   assert.equal(first.overdue, 1);
   assert.equal(f.db.prepare("SELECT checkout_reason FROM attendance_records WHERE id=17").get().checkout_reason, "automatic_timeout");
   f.db.close();
+});
+
+test("pending report deadline skips second Saturday, Sunday, and company holidays", () => {
+  const cutoff = "2026-11-13T15:00:00.000Z"; // Friday evening IST
+  assert.equal(nextWorkingDayDeadline(cutoff, "Asia/Kolkata"), "2026-11-16T18:29:00.000Z");
+  const holidays = new Map([["2026-11-16", "Scheduled company holiday"]]);
+  assert.equal(nextWorkingDayDeadline(cutoff, "Asia/Kolkata", holidays), "2026-11-17T18:29:00.000Z");
 });
