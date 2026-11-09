@@ -36,7 +36,7 @@ export type Application = {
   photoUrl?: string | null;
 };
 
-export type CheckoutReason = "workday_complete" | "leaving_early" | "other";
+export type CheckoutReason = "workday_complete" | "leaving_early" | "other" | "automatic_timeout";
 
 export type DailyWorkReport = {
   id: number;
