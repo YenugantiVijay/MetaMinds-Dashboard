@@ -724,6 +724,17 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
 
 
 test("automatic checkout reports require owner authorization and preserve recorded time", async () => {
+  // Use a fresh session because previous tests intentionally invalidate old cookies.
+  const reportJar = {};
+  const reportSession = await request("/api/auth/me", { jar: reportJar });
+  const reportLogin = await request("/api/auth/login", {
+    jar: reportJar,
+    csrf: reportSession.payload.csrfToken,
+    method: "POST",
+    body: { identifier: "applicant@example.test", password: "Test-only replacement password 2468!" },
+  });
+  assert.equal(reportLogin.status, 200);
+  const reportCsrf = reportLogin.payload.csrfToken;
   const employee = adminDb.prepare("SELECT id FROM employees WHERE user_id = (SELECT id FROM users WHERE email = ?)").get("applicant@example.test");
   assert.ok(employee);
   const checkIn = "2026-12-16T04:30:00.000Z";
@@ -739,17 +750,17 @@ test("automatic checkout reports require owner authorization and preserve record
   `).run(attendanceRecordId, checkOut);
 
   const invalid = await request("/api/attendance/auto-report", {
-    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    jar: reportJar, csrf: reportCsrf, method: "POST",
     body: { attendanceRecordId, workSummary: "Too short" },
   });
   assert.equal(invalid.status, 400);
 
-  const pending = await request("/api/attendance/auto-reports", { jar: employeeJar });
+  const pending = await request("/api/attendance/auto-reports", { jar: reportJar });
   assert.equal(pending.status, 200);
   assert.ok(pending.payload.some((row) => row.attendanceRecordId === attendanceRecordId && row.status !== "submitted"));
 
   const submitted = await request("/api/attendance/auto-report", {
-    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    jar: reportJar, csrf: reportCsrf, method: "POST",
     body: {
       attendanceRecordId,
       workSummary: "Completed scheduled work and reviewed the daily attendance flows.",
@@ -758,7 +769,7 @@ test("automatic checkout reports require owner authorization and preserve record
   });
   assert.equal(submitted.status, 201);
   const second = await request("/api/attendance/auto-report", {
-    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    jar: reportJar, csrf: reportCsrf, method: "POST",
     body: { attendanceRecordId, workSummary: "Attempting to replace a previously submitted daily report." },
   });
   assert.equal(second.status, 409);
