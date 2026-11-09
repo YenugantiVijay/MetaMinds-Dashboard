@@ -519,3 +519,32 @@ test("Scenario 10 — Page Refresh & Data Persistence", async () => {
   const chartSubtitle = await page.locator(".chart-heading-controls p").first().innerText();
   assert.ok(chartSubtitle.includes("4h 56m"), "Chart should still display 4h 56m.");
 });
+
+test("Scenario 11 — Auto checkout preserves attendance and collects pending work report", async () => {
+  const record = db.prepare(`
+    INSERT INTO attendance_records(employee_id, attendance_date, check_in, check_out,
+      worked_minutes, break_minutes, status, checkout_reason)
+    VALUES (1, '2026-11-05', '2026-11-05T04:30:00.000Z',
+      '2026-11-05T14:30:00.000Z', 600, 0, 'completed', 'automatic_timeout')
+    RETURNING id
+  `).get();
+  db.prepare(`
+    INSERT INTO attendance_automation(attendance_record_id, auto_closed_at, report_due_at)
+    VALUES (?, '2026-11-05T14:30:00.000Z', '2026-11-06T18:29:00.000Z')
+  `).run(record.id);
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const pendingPanel = page.locator('[aria-labelledby="auto-report-heading"]');
+  await pendingPanel.waitFor({ state: "visible" });
+  assert.ok((await pendingPanel.innerText()).includes("Daily work report required"));
+  await pendingPanel.locator("textarea").fill("Completed client dashboard development, attendance validation, and integration testing.");
+  await pendingPanel.locator('button[type="submit"]').click();
+  await pendingPanel.waitFor({ state: "hidden" });
+  assert.equal(
+    db.prepare("SELECT check_out FROM attendance_records WHERE id = ?").get(record.id).check_out,
+    "2026-11-05T14:30:00.000Z",
+  );
+  const report = db.prepare("SELECT work_summary FROM daily_work_reports WHERE attendance_record_id = ?").get(record.id);
+  assert.match(report.work_summary, /Completed client dashboard development/);
+});
