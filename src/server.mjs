@@ -1076,6 +1076,14 @@ function rejectApplication(user, applicationId, reason) {
   return { ok: true, emailQueued };
 }
 
+function runAutomationTick() {
+  return runAttendanceAutomation({
+    db, withTransaction, notifyUser, queueEmail, audit,
+    timezone: getSetting("timezone") || "Asia/Kolkata",
+    holidays: getCompanyHolidaysMap(),
+  });
+}
+
 function runAttendanceExceptions() {
   const settings = settingsObject();
   if (!attendancePolicyConfigured(settings)) return;
@@ -1511,6 +1519,8 @@ async function route(req, res, context, body, url) {
     return { status: 200, body: { breakEnd: now, breakMinutes: totalBreakMinutes, status: "active" } };
   }
   if (method === "POST" && path === "/api/attendance/check-out") {
+    // Resolve expired sessions before manual finalization: no check-out after cutoff.
+    runAutomationTick();
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const settings = settingsObject();
@@ -2407,6 +2417,11 @@ const server = createServer(async (req, res) => {
 db.prepare("UPDATE email_outbox SET status = 'pending' WHERE status = 'sending'").run();
 db.prepare("DELETE FROM application_verifications WHERE created_at <= ?").run(new Date(Date.now() - 30 * 60 * 1000).toISOString());
 db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(timestamp());
+try {
+  runAutomationTick(); // Resume missed deadlines after a server restart.
+} catch (error) {
+  console.error("Startup attendance automation failed", { error: error.code ?? "JOB_ERROR" });
+}
 setInterval(() => {
   try {
     runAttendanceExceptions();
@@ -2414,11 +2429,7 @@ setInterval(() => {
     console.error("Attendance exception processing failed", { error: error.code ?? "JOB_ERROR" });
   }
   try {
-    runAttendanceAutomation({
-      db, withTransaction, notifyUser, queueEmail, audit,
-      timezone: getSetting("timezone") || "Asia/Kolkata",
-      holidays: getCompanyHolidaysMap(),
-    });
+    runAutomationTick();
   } catch (error) {
     console.error("Automatic attendance processing failed", { error: error.code ?? "JOB_ERROR" });
   }
