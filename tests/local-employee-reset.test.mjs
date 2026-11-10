@@ -24,29 +24,18 @@ test("full fresh-start removes employee applications, attendance and feed but pr
     db.prepare("INSERT INTO users (id,email,role,password_hash,active) VALUES (1,?,'ceo','original-ceo-hash',1)")
       .run("demo.ceo@metaminds.local");
     db.prepare("INSERT INTO users(id,email,role,password_hash,active) VALUES (2,'employee@example.test','employee','synthetic-hash',1)").run();
-    const empId = db.prepare(`INSERT INTO employees(user_id,employee_id,full_name,employment_type,position,proposed_joining_date)
-      VALUES(2,'MM-2026-9001','Synthetic Employee','employee','Engineer','2026-11-10')`).run().lastInsertRowid;
-    db.prepare(`INSERT INTO attendance_records(employee_id,attendance_date,check_in)
-      VALUES(?,'2026-11-10','2026-11-10T04:30:00Z')`).run(empId);
+    const empId = db.prepare("INSERT INTO employees(user_id,employee_id,full_name,employment_type,position,proposed_joining_date) VALUES(2,'MM-2026-9001','Synthetic Employee','employee','Engineer','2026-11-10')").run().lastInsertRowid;
+    db.prepare("INSERT INTO attendance_records(employee_id,attendance_date,check_in) VALUES(?,'2026-11-10','2026-11-10T04:30:00Z')").run(empId);
     db.prepare("INSERT INTO leave_types(name,paid) VALUES('Test Leave',0)").run();
     const leaveType = db.prepare("SELECT id FROM leave_types WHERE name='Test Leave'").get().id;
-    db.prepare(`INSERT INTO leave_requests(employee_id,leave_type_id,start_date,end_date,reason)
-      VALUES(? ,?,'2026-11-11','2026-11-11','Synthetic personal leave')`).run(empId,leaveType);
-    const app = db.prepare(`INSERT INTO employee_applications
-      (reference,full_name,email,mobile,employment_type,position,proposed_joining_date,privacy_acknowledged_at)
-      VALUES('MM-APP-SYNTHETIC','Synthetic applicant','applicant@example.test','9999999999','employee',
-        'Tester','2026-11-20','2026-11-10T00:00:00Z')`).run().lastInsertRowid;
-    db.prepare(`INSERT INTO application_documents(application_id,private_storage_key,original_name,mime_type,size_bytes)
-      VALUES(?,'synthetic-private-key','demo.pdf','application/pdf',123)`).run(app);
+    db.prepare("INSERT INTO leave_requests(employee_id,leave_type_id,start_date,end_date,reason) VALUES(? ,?,'2026-11-11','2026-11-11','Synthetic personal leave')").run(empId,leaveType);
+    const app = db.prepare("INSERT INTO employee_applications (reference,full_name,email,mobile,employment_type,position,proposed_joining_date,privacy_acknowledged_at) VALUES('MM-APP-SYNTHETIC','Synthetic applicant','applicant@example.test','9999999999','employee', 'Tester','2026-11-20','2026-11-10T00:00:00Z')").run().lastInsertRowid;
+    db.prepare("INSERT INTO application_documents(application_id,private_storage_key,original_name,mime_type,size_bytes) VALUES(?,'synthetic-private-key','demo.pdf','application/pdf',123)").run(app);
     db.prepare("INSERT INTO application_verifications(session_hash,full_name) VALUES('synthetic-session','Synthetic Pending Applicant')").run();
-    db.prepare(`INSERT INTO email_outbox(recipient,subject,encrypted_payload)
-      VALUES('employee@example.test','Synthetic email','synthetic-ciphertext')`).run();
-    db.prepare(`INSERT INTO notifications(user_id,category,title,message)
-      VALUES(1,'attendance','Synthetic notice','Old feed record')`).run();
-    db.prepare(`INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id)
-      VALUES(2,'synthetic.event','employee',?)`).run(String(empId));
-    db.prepare(`INSERT OR REPLACE INTO company_holidays(holiday_date,name,kind,created_by)
-      VALUES('2027-02-01','Synthetic retained company holiday','ceo',2)`).run();
+    db.prepare("INSERT INTO email_outbox(recipient,subject,encrypted_payload) VALUES('employee@example.test','Synthetic email','synthetic-ciphertext')").run();
+    db.prepare("INSERT INTO notifications(user_id,category,title,message) VALUES(1,'attendance','Synthetic notice','Old feed record')").run();
+    db.prepare("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id) VALUES(2,'synthetic.event','employee',?)").run(String(empId));
+    db.prepare("INSERT OR REPLACE INTO company_holidays(holiday_date,name,kind,created_by) VALUES('2027-02-01','Synthetic retained company holiday','ceo',2)").run();
     db.close();
   `;
   try {
