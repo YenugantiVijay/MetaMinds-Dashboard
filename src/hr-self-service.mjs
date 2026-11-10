@@ -81,7 +81,7 @@ export function employeeSelfService({
       const inserted=db.prepare(`INSERT INTO leave_requests
         (employee_id,leave_type_id,start_date,end_date,reason,working_days_count,
          pay_treatment,requires_ceo_approval,excess_days,policy_mode,reason_category,exemption_day,status)
-        VALUES (?,?,?,?,?,?,'unpaid',?,0,'personal',?,?,?)`
+        VALUES (?,?,?,?,?,?,NULL,?,0,'personal',?,?,?)`
       ).run(employee.id,categoryRow.id,startDate,endDate,reason,workingDays,exemption?0:1,category,exemption?1:0,status);
       const id=Number(inserted.lastInsertRowid);
       audit(user.user_id,exemption?"leave.annual_exemption_applied":"leave.personal_requested","leave_request",id);
