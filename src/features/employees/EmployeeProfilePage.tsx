@@ -56,7 +56,7 @@ export function EmployeeProfilePage({ user, notify, onNavigate }: {
         <div className="hub-heading-icon"><UserRound size={26} aria-hidden="true" /></div>
         <div><p className="hub-eyebrow">MY WORKSPACE</p>
           <h1>My Profile</h1>
-          <p>Keep your contact details accurate and securely manage your employee information.</p></div>
+          <p>Keep your contact details accurate and securely manage your employee information, {user.name}.</p></div>
       </header>
       <nav className="hub-tabbar" aria-label="Employee self-service">
         <span className="hub-tab active" aria-current="page"><UserRound size={17}/> My Profile</span>
