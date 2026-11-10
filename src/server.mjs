@@ -22,6 +22,7 @@ import {
 import { applicationApprovedEmail, applicationOtpEmail, applicationSubmittedEmail } from "./email-templates.mjs";
 import { DEMO_CREDENTIALS, ensureDemoAccounts } from "./demo-accounts.mjs";
 import { runAttendanceAutomation, ATTENDANCE_TARGET_MINUTES, ATTENDANCE_WARNING_ELAPSED_MINUTES, ATTENDANCE_MAX_ELAPSED_MINUTES } from "./attendance-automation.mjs";
+import { employeeSelfService } from "./hr-self-service.mjs";
 
 const port = Number(process.env.PORT || 3001);
 const appUrl = new URL(process.env.APP_URL || "http://localhost:5173");
@@ -1763,6 +1764,13 @@ async function route(req, res, context, body, url) {
 
     fail(403, "You are not authorized to view daily work reports.");
   }
+  const selfServiceResponse = employeeSelfService({
+    method, path, body, context, db, requireUser, getEmployeeForUser, fail,
+    validDate, countWorkingDays, withTransaction, audit, notifyUser, queueEmail,
+    currentDateInZone, timestamp,
+  });
+  if (selfServiceResponse) return selfServiceResponse;
+
   if (method === "POST" && path === "/api/leave") {
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
@@ -1879,7 +1887,7 @@ async function route(req, res, context, body, url) {
                lt.name AS leaveType, lr.start_date AS startDate, lr.end_date AS endDate, lr.reason, lr.status,
                lr.working_days_count AS workingDays, lr.pay_treatment AS payTreatment,
                lr.requires_ceo_approval AS requiresCeoApproval, lr.excess_days AS excessDays,
-               lr.ceo_decision_notes AS ceoDecisionNotes, lr.created_at AS createdAt
+               lr.ceo_decision_notes AS ceoDecisionNotes, lr.policy_mode AS policyMode, lr.reason_category AS reasonCategory, lr.exemption_day AS exemptionDay, lr.created_at AS createdAt
         FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id JOIN leave_types lt ON lt.id = lr.leave_type_id
         ORDER BY lr.id DESC
       `).all() };
@@ -1893,7 +1901,7 @@ async function route(req, res, context, body, url) {
                lt.name AS leaveType, lr.start_date AS startDate, lr.end_date AS endDate, lr.reason, lr.status,
                lr.working_days_count AS workingDays, lr.pay_treatment AS payTreatment,
                lr.requires_ceo_approval AS requiresCeoApproval, lr.excess_days AS excessDays,
-               lr.ceo_decision_notes AS ceoDecisionNotes, lr.created_at AS createdAt
+               lr.ceo_decision_notes AS ceoDecisionNotes, lr.policy_mode AS policyMode, lr.reason_category AS reasonCategory, lr.exemption_day AS exemptionDay, lr.created_at AS createdAt
         FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id JOIN leave_types lt ON lt.id = lr.leave_type_id
         WHERE e.id IN (${placeholders}) ORDER BY lr.id DESC
       `).all(...visible) };
@@ -1903,7 +1911,7 @@ async function route(req, res, context, body, url) {
       SELECT lr.id, lt.name AS leaveType, lr.start_date AS startDate, lr.end_date AS endDate, lr.reason, lr.status,
              lr.working_days_count AS workingDays, lr.pay_treatment AS payTreatment,
              lr.requires_ceo_approval AS requiresCeoApproval, lr.excess_days AS excessDays,
-             lr.ceo_decision_notes AS ceoDecisionNotes, lr.created_at AS createdAt
+             lr.ceo_decision_notes AS ceoDecisionNotes, lr.policy_mode AS policyMode, lr.reason_category AS reasonCategory, lr.exemption_day AS exemptionDay, lr.created_at AS createdAt
       FROM leave_requests lr JOIN leave_types lt ON lt.id = lr.leave_type_id WHERE lr.employee_id = ? ORDER BY lr.id DESC
     `).all(employee.id) };
   }
@@ -1917,6 +1925,7 @@ async function route(req, res, context, body, url) {
     if (!canAccessEmployee(user, request.employee_id)) fail(403, "This employee is outside your assigned team.");
     const leaveType = db.prepare("SELECT paid FROM leave_types WHERE id = ?").get(request.leave_type_id);
     if (!leaveType) fail(409, "The leave type for this request is no longer available.");
+    if (request.policy_mode === "personal" && user.role !== "ceo") fail(403, "Only the CEO can review personal leave requests.");
     if (request.requires_ceo_approval && user.role !== "ceo") {
       fail(403, "This request exceeds the configured annual paid-leave entitlement and requires CEO authorization.");
     }
@@ -1942,11 +1951,13 @@ async function route(req, res, context, body, url) {
       `).run(decision, finalPayTreatment, ceoNotes, user.user_id, timestamp(), request.id);
       db.prepare("INSERT INTO leave_approvals(leave_request_id, reviewer_user_id, decision, reason) VALUES (?, ?, ?, ?)")
         .run(request.id, user.user_id, decision, reason || ceoNotes);
-      const treatmentLabel = finalPayTreatment === "half_pay"
-        ? " (Approved at 50% Half Pay)"
-        : finalPayTreatment === "full_paid"
-          ? " (Approved as 100% Paid Leave)"
-          : " (Approved as Unpaid Leave)";
+      const treatmentLabel = request.policy_mode === "personal"
+        ? ""
+        : finalPayTreatment === "half_pay"
+          ? " (Approved at 50% Half Pay)"
+          : finalPayTreatment === "full_paid"
+            ? " (Approved as 100% Paid Leave)"
+            : " (Approved as Unpaid Leave)";
       notifyUser(employeeUser.id, "leave", `Leave request ${decision}`, decision === "approved"
         ? `Your leave request was approved${treatmentLabel}.`
         : `Your leave request was not approved. ${reason}`);
