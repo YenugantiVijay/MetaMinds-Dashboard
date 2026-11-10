@@ -57,8 +57,9 @@ export function Topbar({
       section: "employees",
       roles: ["ceo", "team_lead", "employee"],
     },
+    { label: "My Profile", section: "profile", roles: ["employee", "team_lead"] },
     { label: "Attendance", section: "attendance", roles: ["ceo", "team_lead", "employee"] },
-    { label: "Leave", section: "leave", roles: ["ceo", "team_lead", "employee"] },
+    { label: "Leave & Calendar", section: "leave", roles: ["ceo", "team_lead", "employee"] },
     { label: "Applications", section: "applications", roles: ["ceo"] },
     { label: "Payroll", section: "payroll", roles: ["ceo"] },
     { label: "Company settings", section: "settings", roles: ["ceo"] },
@@ -152,7 +153,7 @@ export function Topbar({
                     ? "Chief Executive Officer"
                     : user.role === "team_lead"
                     ? "Team Lead"
-                    : "UI/UX Designer")}
+                    : "Employee")}
               </span>
             </div>
             <ChevronDown size={14} className="profile-capsule-arrow" />

@@ -247,7 +247,7 @@ before(async () => {
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
@@ -496,37 +496,31 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(checkedOut.status, 200);
 
   assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
-  const paidLeaveAttempt = await request("/api/leave", {
-    jar: employeeJar,
-    csrf: employeeCsrf,
-    method: "POST",
-    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic paid leave policy test" },
+  const legacyLeaveAttempt = await request("/api/leave", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Legacy form attempt" },
   });
-  assert.equal(paidLeaveAttempt.status, 503);
+  assert.equal(legacyLeaveAttempt.status, 410);
 
-  const unpaidType = await request("/api/leave-types", {
-    jar: adminJar, csrf: adminCsrf, method: "POST",
-    body: { name: "Synthetic Unpaid Leave", paid: false },
-  });
-  assert.equal(unpaidType.status, 201);
-  const unpaidLeaveTypeId = adminDb.prepare("SELECT id FROM leave_types WHERE name = ?").get("Synthetic Unpaid Leave").id;
-  const leave = await request("/api/leave", {
-    jar: employeeJar,
-    csrf: employeeCsrf,
-    method: "POST",
-    body: { leaveTypeId: unpaidLeaveTypeId, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic unpaid leave test" },
+  const leave = await request("/api/personal-leave", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: {
+      reasonCategory: "emergency", details: "Synthetic multi-day personal leave",
+      startDate: "2026-11-10", endDate: "2026-11-11",
+    },
   });
   assert.equal(leave.status, 201);
-  assert.equal(leave.payload.payTreatment, "unpaid");
+  assert.equal(leave.payload.status, "pending");
+  assert.equal(leave.payload.exemption, false);
   const ownApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(ownApproval.status, 403);
 
   const ceoLeaveApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: adminJar, csrf: adminCsrf, method: "POST", body: {} });
   assert.equal(ceoLeaveApproval.status, 200);
-  assert.equal(ceoLeaveApproval.payload.payTreatment, "unpaid");
+  assert.equal(ceoLeaveApproval.payload.payTreatment, null);
   const approvedLeave = adminDb.prepare("SELECT status, pay_treatment FROM leave_requests WHERE id = ?").get(leave.payload.id);
   assert.equal(approvedLeave.status, "approved");
-  assert.equal(approvedLeave.pay_treatment, "unpaid");
+  assert.equal(approvedLeave.pay_treatment, null, "Personal leave approval must not decide payroll treatment.");
 
   const missingResetEmail = await request("/api/auth/password-reset/request", {
     jar: employeeJar,
@@ -780,4 +774,82 @@ test("automatic checkout reports require owner authorization and preserve record
   const management = await request("/api/attendance/auto-reports", { jar: adminJar });
   assert.equal(management.status, 200);
   assert.ok(management.payload.some((row) => row.attendanceRecordId === attendanceRecordId && row.status === "submitted"));
+});
+
+
+test("self-service profile is owner-scoped and personal leave follows the one-day exemption policy", async () => {
+  const jar = {};
+  const initial = await request("/api/auth/me", { jar });
+  const login = await request("/api/auth/login", {
+    jar, csrf: initial.payload.csrfToken, method: "POST",
+    body: { identifier: "applicant@example.test", password: "Test-only replacement password 2468!" },
+  });
+  assert.equal(login.status, 200);
+  const csrf = login.payload.csrfToken;
+
+  const profile = await request("/api/me/profile", { jar });
+  assert.equal(profile.status, 200);
+  assert.ok(profile.payload.employeeId);
+  assert.equal(profile.payload.email, "applicant@example.test");
+
+  const updated = await request("/api/me/profile", {
+    jar, csrf, method: "POST",
+    body: {
+      phone: "+91 98765 43210",
+      address: "Development-only contact address",
+      emergencyName: "Synthetic Contact",
+      emergencyRelationship: "Family",
+      emergencyPhone: "+91 99887 77665",
+      role: "ceo", // Must be ignored, never elevated.
+    },
+  });
+  assert.equal(updated.status, 200);
+  const reloaded = await request("/api/me/profile", { jar });
+  assert.equal(reloaded.payload.phone, "+91 98765 43210");
+  assert.equal(reloaded.payload.emergencyName, "Synthetic Contact");
+  assert.equal(reloaded.payload.email, "applicant@example.test");
+
+  const invalid = await request("/api/personal-leave", {
+    jar, csrf, method: "POST",
+    body: { reasonCategory: "other", details: "", startDate: "2027-02-03", endDate: "2027-02-03" },
+  });
+  assert.equal(invalid.status, 400);
+
+  const first = await request("/api/personal-leave", {
+    jar, csrf, method: "POST",
+    body: { reasonCategory: "medical", details: "Development-only medical absence", startDate: "2027-02-03", endDate: "2027-02-03" },
+  });
+  assert.equal(first.status, 201);
+  assert.equal(first.payload.status, "approved");
+  assert.equal(first.payload.exemption, true);
+
+  const second = await request("/api/personal-leave", {
+    jar, csrf, method: "POST",
+    body: { reasonCategory: "personal", details: "Personal appointment", startDate: "2027-02-04", endDate: "2027-02-04" },
+  });
+  assert.equal(second.status, 201);
+  assert.equal(second.payload.status, "pending");
+  assert.equal(second.payload.exemption, false);
+  const row = adminDb.prepare("SELECT policy_mode, requires_ceo_approval, reason_category FROM leave_requests WHERE id=?").get(second.payload.id);
+  assert.equal(row.policy_mode, "personal");
+  assert.equal(row.requires_ceo_approval, 1);
+  assert.equal(row.reason_category, "personal");
+  const reviewed = await request(`/api/leave/${second.payload.id}/approve`, {
+    jar: adminJar, csrf: adminCsrf, method: "POST", body: {},
+  });
+  assert.equal(reviewed.status, 200);
+  assert.equal(adminDb.prepare("SELECT status FROM leave_requests WHERE id=?").get(second.payload.id).status,"approved");
+  const exemptions=adminDb.prepare("SELECT COUNT(*) AS n FROM leave_requests WHERE employee_id=(SELECT id FROM employees WHERE user_id=(SELECT id FROM users WHERE email='applicant@example.test')) AND exemption_day=1 AND status='approved' AND substr(start_date,1,4)='2027'").get().n;
+  assert.equal(exemptions,1);
+  const futureQuota = await request("/api/personal-leave/quota?year=2027", { jar });
+  assert.equal(futureQuota.status, 200);
+  assert.equal(futureQuota.payload.year, 2027);
+  assert.equal(futureQuota.payload.remaining, 0);
+  const nextYearQuota = await request("/api/personal-leave/quota?year=2028", { jar });
+  assert.equal(nextYearQuota.status, 200);
+  assert.equal(nextYearQuota.payload.remaining, 1);
+  const badQuota = await request("/api/personal-leave/quota?year=abc", { jar });
+  assert.equal(badQuota.status, 400);
+  assert.equal(adminDb.prepare("SELECT pay_treatment FROM leave_requests WHERE id = ?").get(second.payload.id).pay_treatment,
+    null, "CEO-approved personal leave must not assign a payroll classification.");
 });

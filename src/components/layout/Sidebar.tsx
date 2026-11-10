@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  UserRound,
   X,
 } from "lucide-react";
 import type { Section, User } from "../../types";
@@ -45,8 +46,9 @@ export function Sidebar({
       icon: <Users size={21} />,
       roles: ["ceo", "team_lead", "employee"],
     },
+    { id: "profile", label: "My Profile", icon: <UserRound size={21} />, roles: ["employee", "team_lead"] },
     { id: "attendance", label: "Attendance", icon: <Clock3 size={21} />, roles: ["ceo", "team_lead", "employee"] },
-    { id: "leave", label: "Leave", icon: <CalendarDays size={21} />, roles: ["ceo", "team_lead", "employee"] },
+    { id: "leave", label: "Leave & Calendar", icon: <CalendarDays size={21} />, roles: ["ceo", "team_lead", "employee"] },
     { id: "payroll", label: "Payroll", icon: <FileText size={21} />, roles: ["ceo"] },
   ];
 

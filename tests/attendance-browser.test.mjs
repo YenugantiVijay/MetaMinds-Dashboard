@@ -548,3 +548,29 @@ test("Scenario 11 — Auto checkout preserves attendance and collects pending wo
   const report = db.prepare("SELECT work_summary FROM daily_work_reports WHERE attendance_record_id = ?").get(record.id);
   assert.match(report.work_summary, /Completed client dashboard development/);
 });
+
+
+test("Scenario 12 — Full-page profile editor and reason-only leave calendar work in browser", async () => {
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const profileNav = page.locator(".side-nav button:has-text('My Profile')").first();
+  await profileNav.click();
+  await page.getByRole("heading",{name:"My Profile",exact:true}).waitFor({state:"visible"});
+  assert.equal(await page.locator(".workspace-panel:has-text('My account')").count(),0);
+  await page.getByLabel("Phone number").fill("+91 98765 43210");
+  await page.getByRole("button",{name:"Save Changes"}).click();
+  await page.getByLabel("Phone number").waitFor({state:"visible"});
+  assert.equal(await page.getByLabel("Phone number").inputValue(),"+91 98765 43210");
+
+  await page.locator(".hub-tabbar button:has-text('Leave & Calendar')").click();
+  await page.getByRole("heading",{name:"Leave & Calendar",exact:true}).waitFor({state:"visible"});
+  assert.equal(await page.locator(".hub-calendar-weekday").count(),7);
+  assert.ok(await page.locator(".hub-calendar-day").count()>=28);
+  const reasons=await page.getByLabel("Reason for leave").locator("option").allTextContents();
+  assert.ok(reasons.includes("Other — please specify"));
+  assert.ok(reasons.every(value=>!/(?:paid|unpaid)/i.test(value)));
+
+  await page.getByLabel("Reason for leave").selectOption("other");
+  await page.getByLabel("Please mention your reason (required)").fill("Synthetic family event");
+  assert.equal(await page.getByLabel("Please mention your reason (required)").inputValue(),"Synthetic family event");
+});

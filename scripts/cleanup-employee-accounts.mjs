@@ -1,190 +1,121 @@
+/**
+ * Explicit, backup-first LOCAL DEVELOPMENT employee reset.
+ * Default mode only prints counts; it never modifies the database.
+ *
+ * Run with a clearly isolated local database:
+ * DATA_DIR=<dedicated-test-data-dir> NODE_ENV=development node scripts/cleanup-employee-accounts.mjs
+ * DATA_DIR=<dedicated-test-data-dir> NODE_ENV=development node scripts/cleanup-employee-accounts.mjs --execute --confirm-disposable-data
+ *
+ * Never run against a production or employee-data database.
+ */
 import { db, dataDir } from "../src/database.mjs";
-import { DEMO_CREDENTIALS, ensureDemoAccounts } from "../src/demo-accounts.mjs";
+import { DEMO_CREDENTIALS } from "../src/demo-accounts.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync, copyFileSync, chmodSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 
-console.log("=== LOCAL DATABASE RESET & CLEANUP ===");
-console.log("Database dataDir:", dataDir);
-
-// 1. Safety verification
-if (!dataDir.includes(".meta-minds-portal")) {
-  throw new Error(`Refusing to run cleanup: unexpected database directory: ${dataDir}`);
+const dedicatedDataDir = process.env.DATA_DIR && resolve(process.env.DATA_DIR) === dataDir;
+const forbidden = /(production|live|prod-db)/i.test(dataDir);
+if (process.env.NODE_ENV !== "development" || !dedicatedDataDir || forbidden) {
+  throw new Error("Employee cleanup requires NODE_ENV=development and an explicit dedicated local DATA_DIR.");
+}
+const ceo = db.prepare("SELECT id,email,role,password_hash FROM users WHERE email=? COLLATE NOCASE")
+  .get(DEMO_CREDENTIALS.ceo.email);
+if (!ceo || ceo.role !== "ceo" || !Number.isSafeInteger(ceo.id)) {
+  throw new Error("Unique CEO demo account could not be verified; cleanup refused.");
+}
+const otherCeo = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='ceo' AND id<>?").get(ceo.id).n;
+if (otherCeo) throw new Error("Another CEO account exists. Refusing automated cleanup.");
+const doomedEmployee = `SELECT id FROM employees WHERE user_id<> ${ceo.id}`;
+const doomedUsers = `SELECT id FROM users WHERE id<> ${ceo.id}`;
+const count = (sql) => db.prepare(sql).get().n;
+const preview = {
+  otherUsers: count(`SELECT COUNT(*) n FROM users WHERE id IN (${doomedUsers})`),
+  employees: count(`SELECT COUNT(*) n FROM employees WHERE id IN (${doomedEmployee})`),
+  attendanceRecords: count(`SELECT COUNT(*) n FROM attendance_records WHERE employee_id IN (${doomedEmployee})`),
+  leaveRequests: count(`SELECT COUNT(*) n FROM leave_requests WHERE employee_id IN (${doomedEmployee})`),
+  dailyReports: count(`SELECT COUNT(*) n FROM daily_work_reports WHERE employee_id IN (${doomedEmployee})`),
+};
+console.log("LOCAL DEVELOPMENT RESET PREVIEW (no data changed):", preview);
+console.log("Preserved CEO demo account ID:", ceo.id);
+if (!process.argv.includes("--execute")) {
+  console.log("Preview only. To run, supply both --execute and --confirm-disposable-data after reviewing the above counts.");
+  process.exit(0);
+}
+if (!process.argv.includes("--confirm-disposable-data")) {
+  throw new Error("Explicit confirmation --confirm-disposable-data required.");
 }
 
-const ceoEmail = DEMO_CREDENTIALS.ceo.email;
-const ceoUser = db.prepare("SELECT id, email, role FROM users WHERE email = ? COLLATE NOCASE").get(ceoEmail);
-if (!ceoUser) {
-  throw new Error(`CEO demo account '${ceoEmail}' not found in database! Aborting.`);
-}
-console.log(`CEO account identified: ID ${ceoUser.id}, Email: ${ceoUser.email}, Role: ${ceoUser.role}`);
+// Verify a single-file, consistent SQLite backup with its encryption key before any deletion.
+const safeName = new Date().toISOString().replace(/[:.]/g,"-");
+const backupDir = join(dataDir,"backups",`pre-employee-reset-${safeName}`);
+mkdirSync(backupDir,{recursive:true,mode:0o700});
+const snapshot = join(backupDir,"portal.sqlite");
+db.exec(`VACUUM INTO '${snapshot.replace(/'/g,"''")}'`);
+copyFileSync(join(dataDir,".application-key"),join(backupDir,".application-key"));
+const check = new DatabaseSync(snapshot);
+const integrity = check.prepare("PRAGMA integrity_check").get().integrity_check;
+const backupCeo = check.prepare("SELECT password_hash FROM users WHERE id=?").get(ceo.id);
+check.close();
+if (integrity !== "ok" || backupCeo?.password_hash !== ceo.password_hash ||
+    statSync(snapshot).size < 4096) throw new Error("Backup integrity/CEO verification failed.");
+console.log("Verified backup saved outside Git repository:", backupDir);
 
-// 2. Identify non-CEO users and employees
-const nonCeoUsers = db.prepare("SELECT id, email, role FROM users WHERE id != ?").all(ceoUser.id);
-console.log(`Found ${nonCeoUsers.length} non-CEO user(s) to remove:`);
-console.table(nonCeoUsers);
-
-const existingEmployees = db.prepare("SELECT id, user_id, employee_id, full_name FROM employees").all();
-console.log(`Found ${existingEmployees.length} employee record(s) to remove:`);
-console.table(existingEmployees);
-
-// 3. Transactional cleanup
-console.log("\nExecuting atomic transactional cleanup...");
+db.exec("PRAGMA foreign_keys=ON");
 db.exec("BEGIN IMMEDIATE");
-
 try {
-  // Disconnect audit log actor foreign keys for non-CEO users while preserving immutable logs
-  const auditUpdated = db.prepare(`
-    UPDATE audit_logs
-    SET actor_user_id = NULL
-    WHERE actor_user_id IS NOT NULL AND actor_user_id != ?
-  `).run(ceoUser.id);
-  console.log(`- Updated ${auditUpdated.changes} audit_log entries to preserve history without foreign key violations.`);
+  const del = (table, predicate) => db.prepare(`DELETE FROM ${table} WHERE ${predicate}`).run().changes;
+  // Preserve audit events but detach deleted actors to satisfy foreign keys.
+  db.prepare(`UPDATE audit_logs SET actor_user_id=NULL WHERE actor_user_id IN (${doomedUsers})`).run();
+  db.prepare(`UPDATE employee_applications SET reviewed_by=NULL WHERE reviewed_by IN (${doomedUsers})`).run();
+  db.prepare(`UPDATE payroll_runs SET finalized_by=NULL WHERE finalized_by IN (${doomedUsers})`).run();
 
-  // Attendance & Daily Work
-  const dwr = db.prepare("DELETE FROM daily_work_reports").run();
-  console.log(`- Deleted ${dwr.changes} daily_work_reports.`);
+  const attendance = `SELECT id FROM attendance_records WHERE employee_id IN (${doomedEmployee})`;
+  const leaves = `SELECT id FROM leave_requests WHERE employee_id IN (${doomedEmployee})`;
+  const structures = `SELECT id FROM salary_structures WHERE employee_id IN (${doomedEmployee})`;
+  const payrollItems = `SELECT id FROM payroll_items WHERE employee_id IN (${doomedEmployee})`;
 
-  const ab = db.prepare("DELETE FROM attendance_breaks").run();
-  console.log(`- Deleted ${ab.changes} attendance_breaks.`);
+  del("attendance_corrections",`attendance_record_id IN (${attendance})`);
+  del("attendance_breaks",`attendance_record_id IN (${attendance})`);
+  del("attendance_automation",`attendance_record_id IN (${attendance})`);
+  del("daily_work_reports",`attendance_record_id IN (${attendance}) OR employee_id IN (${doomedEmployee})`);
+  del("attendance_records",`employee_id IN (${doomedEmployee})`);
+  del("attendance_reminders",`employee_id IN (${doomedEmployee})`);
+  del("attendance_exceptions",`employee_id IN (${doomedEmployee})`);
 
-  const ac = db.prepare("DELETE FROM attendance_corrections").run();
-  console.log(`- Deleted ${ac.changes} attendance_corrections.`);
+  del("leave_approvals",`leave_request_id IN (${leaves})`);
+  del("leave_requests",`employee_id IN (${doomedEmployee})`);
+  del("leave_balances",`employee_id IN (${doomedEmployee})`);
+  del("team_members",`employee_id IN (${doomedEmployee})`);
+  del("employee_referrals",`employee_id IN (${doomedEmployee})`);
+  del("employee_emergency_contacts",`employee_id IN (${doomedEmployee})`);
+  del("employee_self_profiles",`employee_id IN (${doomedEmployee})`);
 
-  const ar = db.prepare("DELETE FROM attendance_records").run();
-  console.log(`- Deleted ${ar.changes} attendance_records.`);
+  del("payslips",`payroll_item_id IN (${payrollItems})`);
+  del("payroll_items",`employee_id IN (${doomedEmployee})`);
+  del("salary_components",`salary_structure_id IN (${structures})`);
+  del("salary_structures",`employee_id IN (${doomedEmployee})`);
 
-  const ae = db.prepare("DELETE FROM attendance_exceptions").run();
-  console.log(`- Deleted ${ae.changes} attendance_exceptions.`);
+  del("notifications",`user_id IN (${doomedUsers})`);
+  del("sessions",`user_id IN (${doomedUsers})`);
+  del("activation_tokens",`user_id IN (${doomedUsers})`);
+  del("password_reset_tokens",`user_id IN (${doomedUsers})`);
 
-  const arm = db.prepare("DELETE FROM attendance_reminders").run();
-  console.log(`- Deleted ${arm.changes} attendance_reminders.`);
+  // Preserve applications not proven to belong to the deleted employees.
+  // Do not clear company settings, holidays, departments, teams, email logs or audit history.
+  del("employees",`id IN (${doomedEmployee})`);
+  del("users",`id IN (${doomedUsers})`);
 
-  // Leave & Teams
-  const la = db.prepare("DELETE FROM leave_approvals").run();
-  console.log(`- Deleted ${la.changes} leave_approvals.`);
-
-  const lr = db.prepare("DELETE FROM leave_requests").run();
-  console.log(`- Deleted ${lr.changes} leave_requests.`);
-
-  const lb = db.prepare("DELETE FROM leave_balances").run();
-  console.log(`- Deleted ${lb.changes} leave_balances.`);
-
-  const tm = db.prepare("DELETE FROM team_members").run();
-  console.log(`- Deleted ${tm.changes} team_members.`);
-
-  // Employee details
-  const er = db.prepare("DELETE FROM employee_referrals").run();
-  console.log(`- Deleted ${er.changes} employee_referrals.`);
-
-  const eec = db.prepare("DELETE FROM employee_emergency_contacts").run();
-  console.log(`- Deleted ${eec.changes} employee_emergency_contacts.`);
-
-  // Payroll & Salary
-  db.prepare("DELETE FROM payslips").run();
-  db.prepare("DELETE FROM payroll_items").run();
-  db.prepare("DELETE FROM payroll_runs").run();
-  const sc = db.prepare("DELETE FROM salary_components").run();
-  console.log(`- Deleted ${sc.changes} salary_components.`);
-
-  const ss = db.prepare("DELETE FROM salary_structures").run();
-  console.log(`- Deleted ${ss.changes} salary_structures.`);
-
-  // Notifications & Tokens
-  const notifs = db.prepare("DELETE FROM notifications").run();
-  console.log(`- Deleted ${notifs.changes} notifications.`);
-
-  const at = db.prepare("DELETE FROM activation_tokens").run();
-  console.log(`- Deleted ${at.changes} activation_tokens.`);
-
-  const prt = db.prepare("DELETE FROM password_reset_tokens").run();
-  console.log(`- Deleted ${prt.changes} password_reset_tokens.`);
-
-  // Applications
-  db.prepare("DELETE FROM application_documents").run();
-  db.prepare("DELETE FROM application_verifications").run();
-  const ea = db.prepare("DELETE FROM employee_applications").run();
-  console.log(`- Deleted ${ea.changes} employee_applications.`);
-
-  // Clear email outbox test messages
-  const eo = db.prepare("DELETE FROM email_outbox").run();
-  console.log(`- Deleted ${eo.changes} email_outbox entries.`);
-
-  // Clear all sessions (force re-login for clean state)
-  const sess = db.prepare("DELETE FROM sessions").run();
-  console.log(`- Deleted ${sess.changes} sessions.`);
-
-  // Delete employee profiles
-  const emp = db.prepare("DELETE FROM employees").run();
-  console.log(`- Deleted ${emp.changes} employees.`);
-
-  // Delete non-CEO users
-  const usr = db.prepare("DELETE FROM users WHERE id != ?").run(ceoUser.id);
-  console.log(`- Deleted ${usr.changes} non-CEO user(s).`);
-
-  // Reset employee ID sequence for fresh onboarding
-  const seq = db.prepare("UPDATE employee_id_year_sequences SET next_value = 1").run();
-  console.log(`- Reset employee_id_year_sequences (rows affected: ${seq.changes}).`);
-
+  const remaining = db.prepare("SELECT COUNT(*) AS n FROM employees").get().n;
+  const remainingUsers = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+  const actualCeo = db.prepare("SELECT password_hash,role FROM users WHERE id=?").get(ceo.id);
+  if (remaining !== 0 || remainingUsers !== 1 || actualCeo?.role !== "ceo" ||
+    actualCeo.password_hash !== ceo.password_hash) throw new Error("CEO preservation or cleanup verification failed.");
+  const foreignKeys = db.prepare("PRAGMA foreign_key_check").all();
+  if (foreignKeys.length) throw new Error(`Foreign key violations: ${foreignKeys.length}`);
   db.exec("COMMIT");
-  console.log("Transactional cleanup committed successfully!");
-
-  // Re-verify CEO account & baseline configuration
-  ensureDemoAccounts();
-  console.log("Demo accounts baseline verified.");
+  console.log("Local disposable employee reset completed. Company configuration and CEO credentials preserved.");
 } catch (error) {
   db.exec("ROLLBACK");
-  console.error("Cleanup failed! Rolled back transaction.", error);
   throw error;
 }
-
-// 4. Verify integrity and foreign keys
-console.log("\n=== VERIFYING DATABASE INTEGRITY ===");
-const integrity = db.prepare("PRAGMA integrity_check;").get();
-console.log("PRAGMA integrity_check:", integrity.integrity_check);
-if (integrity.integrity_check !== "ok") {
-  throw new Error(`Integrity check failed: ${JSON.stringify(integrity)}`);
-}
-
-const fkViolations = db.prepare("PRAGMA foreign_key_check;").all();
-console.log("PRAGMA foreign_key_check violations count:", fkViolations.length);
-if (fkViolations.length > 0) {
-  console.table(fkViolations);
-  throw new Error("Foreign key check failed! Violations detected.");
-}
-
-// 5. Verify preserved baseline and zeroed employee tables
-console.log("\n=== VERIFYING POST-CLEANUP RECORD COUNTS ===");
-const expectedZeroTables = [
-  'users_non_ceo',
-  'employees',
-  'attendance_records',
-  'attendance_breaks',
-  'daily_work_reports',
-  'attendance_exceptions',
-  'leave_requests',
-  'leave_balances',
-  'employee_applications',
-  'sessions'
-];
-
-const remainingUsers = db.prepare("SELECT id, email, role, active FROM users").all();
-console.log("Remaining users in database:");
-console.table(remainingUsers);
-
-if (remainingUsers.length !== 1 || remainingUsers[0].email !== ceoEmail) {
-  throw new Error("Unexpected remaining users: expected exactly 1 CEO demo user!");
-}
-
-const preservedCounts = {
-  company_settings: db.prepare("SELECT count(*) as c FROM company_settings").get().c,
-  company_holidays: db.prepare("SELECT count(*) as c FROM company_holidays").get().c,
-  departments: db.prepare("SELECT count(*) as c FROM departments").get().c,
-  teams: db.prepare("SELECT count(*) as c FROM teams").get().c,
-  leave_types: db.prepare("SELECT count(*) as c FROM leave_types").get().c,
-  audit_logs: db.prepare("SELECT count(*) as c FROM audit_logs").get().c,
-};
-
-console.log("\nPreserved Baseline Configuration:");
-for (const [name, count] of Object.entries(preservedCounts)) {
-  console.log(`  ${name.padEnd(20)}: ${count}`);
-}
-
-console.log("\nPost-cleanup check passed! Local development database is completely clean and ready for fresh onboarding.");
