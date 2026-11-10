@@ -841,4 +841,15 @@ test("self-service profile is owner-scoped and personal leave follows the one-da
   assert.equal(adminDb.prepare("SELECT status FROM leave_requests WHERE id=?").get(second.payload.id).status,"approved");
   const exemptions=adminDb.prepare("SELECT COUNT(*) AS n FROM leave_requests WHERE employee_id=(SELECT id FROM employees WHERE user_id=(SELECT id FROM users WHERE email='applicant@example.test')) AND exemption_day=1 AND status='approved' AND substr(start_date,1,4)='2027'").get().n;
   assert.equal(exemptions,1);
+  const futureQuota = await request("/api/personal-leave/quota?year=2027", { jar });
+  assert.equal(futureQuota.status, 200);
+  assert.equal(futureQuota.payload.year, 2027);
+  assert.equal(futureQuota.payload.remaining, 0);
+  const nextYearQuota = await request("/api/personal-leave/quota?year=2028", { jar });
+  assert.equal(nextYearQuota.status, 200);
+  assert.equal(nextYearQuota.payload.remaining, 1);
+  const badQuota = await request("/api/personal-leave/quota?year=abc", { jar });
+  assert.equal(badQuota.status, 400);
+  assert.equal(adminDb.prepare("SELECT pay_treatment FROM leave_requests WHERE id = ?").get(second.payload.id).pay_treatment,
+    null, "CEO-approved personal leave must not assign a payroll classification.");
 });
