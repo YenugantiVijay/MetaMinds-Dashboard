@@ -3,7 +3,7 @@ export function BrandMark({ className = "" }: { className?: string }) {
     <div className={`brand-header-lockup ${className}`} aria-label="MetaMinds Pvt. Ltd.">
       <div className="brand-logo-tile">
         <img
-          src="/meta-minds-pvt-ltd.png"
+          src="/favicon.png"
           alt="MetaMinds Pvt. Ltd."
           className="brand-logo-img"
         />
