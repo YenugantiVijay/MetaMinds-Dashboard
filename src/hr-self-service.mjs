@@ -2,7 +2,7 @@
 export function employeeSelfService({
   method, path, body, context, db, requireUser, getEmployeeForUser, fail,
   validDate, countWorkingDays, withTransaction, audit, notifyUser, queueEmail,
-  currentDateInZone, timestamp,
+  currentDateInZone, timestamp, searchParams,
 }) {
   if (!["/api/me/profile", "/api/personal-leave", "/api/personal-leave/quota"].includes(path)) return undefined;
   const user = requireUser(context);
@@ -44,7 +44,11 @@ export function employeeSelfService({
     return { status: 200, body: { ok: true, updatedAt } };
   }
   if (method === "GET" && path === "/api/personal-leave/quota") {
-    const year = currentDateInZone().slice(0,4);
+    const requestedYear = searchParams?.get("year");
+    if (requestedYear && !/^(20[2-9][0-9]|21[0-9][0-9])$/.test(requestedYear)) {
+      fail(400, "Choose a valid leave calendar year.");
+    }
+    const year = requestedYear || currentDateInZone().slice(0,4);
     const used = db.prepare(`SELECT COUNT(*) AS total FROM leave_requests
       WHERE employee_id=? AND exemption_day=1 AND status='approved' AND substr(start_date,1,4)=?`
     ).get(employee.id,year).total;
