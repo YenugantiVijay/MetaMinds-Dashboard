@@ -86,6 +86,15 @@ AND (
   (holiday_date='2026-12-25' AND name IN ('Christmas'))
 );
 
+-- Migration 008 used different, recognizable English aliases for these official days.
+UPDATE company_holidays SET kind='government',
+  source_url='https://www.gvmc.gov.in/wss/image_uploads/26HL.pdf'
+WHERE kind='legacy' AND (
+  (holiday_date='2026-12-25' AND name='Christmas Day') OR
+  (holiday_date='2026-11-08' AND name='Diwali (Deepavali)') OR
+  (holiday_date='2026-10-20' AND name='Dussehra (Vijayadashami)')
+);
+
 -- Optional observances: show festive icons; do NOT silently treat these as holidays.
 INSERT OR IGNORE INTO calendar_observances(observance_date,name,icon,source_url) VALUES
   ('2026-01-01','New Year''s Day','✨','https://www.gvmc.gov.in/wss/image_uploads/26HL.pdf'),
