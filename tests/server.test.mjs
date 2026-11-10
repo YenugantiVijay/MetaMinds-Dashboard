@@ -517,7 +517,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
 
   const ceoLeaveApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: adminJar, csrf: adminCsrf, method: "POST", body: {} });
   assert.equal(ceoLeaveApproval.status, 200);
-  assert.equal(ceoLeaveApproval.payload.payTreatment, "unpaid");
+  assert.equal(ceoLeaveApproval.payload.payTreatment, null);
   const approvedLeave = adminDb.prepare("SELECT status, pay_treatment FROM leave_requests WHERE id = ?").get(leave.payload.id);
   assert.equal(approvedLeave.status, "approved");
   assert.equal(approvedLeave.pay_treatment, null, "Personal leave approval must not decide payroll treatment.");
