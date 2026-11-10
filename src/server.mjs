@@ -2016,9 +2016,9 @@ async function route(req, res, context, body, url) {
     if (!Number.isSafeInteger(id) || id <= 0) fail(400, "A valid holiday ID is required.");
     const holiday = db.prepare("SELECT id,holiday_date,name,kind FROM company_holidays WHERE id = ?").get(id);
     if (!holiday) fail(404, "Company holiday not found.");
+    if (holiday.holiday_date <= currentDateInZone()) fail(409, "Past and current company holidays cannot be removed.");
     if (holiday.kind === "government")
       fail(403, "Verified government holidays cannot be deleted. Use a new official notification to correct future dates.");
-    if (holiday.holiday_date <= currentDateInZone()) fail(409, "Past and current company holidays cannot be removed.");
     withTransaction(() => {
       db.prepare("DELETE FROM company_holidays WHERE id = ?").run(id);
       audit(user.user_id, "company_holiday.removed", "company_holiday", id);
