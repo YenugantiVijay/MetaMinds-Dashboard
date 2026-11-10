@@ -73,6 +73,7 @@ export function employeeSelfService({
         AND exemption_day=1 AND status='approved' AND substr(start_date,1,4)=?`
       ).get(employee.id,startDate.slice(0,4)).total;
       const exemption=workingDays===1 && used===0;
+      db.prepare("INSERT OR IGNORE INTO leave_types(name,paid,active) VALUES ('Personal leave request',0,1)").run();
       const categoryRow=db.prepare("SELECT id FROM leave_types WHERE name='Personal leave request' AND active=1").get();
       if(!categoryRow) fail(503,"Personal leave policy is not configured.");
       const status=exemption?"approved":"pending";
