@@ -100,7 +100,7 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
       <header className="hub-page-header">
         <div className="hub-heading-icon"><CalendarDays size={26} aria-hidden="true"/></div>
         <div><p className="hub-eyebrow">TIME OFF</p><h1>Leave &amp; Calendar</h1>
-          <p>Explore company holidays, request leave, and follow your approval status.</p></div>
+          <p>Explore company holidays, request leave, and follow your approval status, {user.name}.</p></div>
       </header>
       <nav className="hub-tabbar" aria-label="Employee self-service">
         <button className="hub-tab" type="button" onClick={()=>onNavigate("profile")}>My Profile</button>
