@@ -496,28 +496,22 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(checkedOut.status, 200);
 
   assert.equal((await request("/api/leave/balance", { jar: employeeJar })).status, 503);
-  const paidLeaveAttempt = await request("/api/leave", {
-    jar: employeeJar,
-    csrf: employeeCsrf,
-    method: "POST",
-    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic paid leave policy test" },
+  const legacyLeaveAttempt = await request("/api/leave", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: { leaveTypeId: 1, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Legacy form attempt" },
   });
-  assert.equal(paidLeaveAttempt.status, 503);
+  assert.equal(legacyLeaveAttempt.status, 410);
 
-  const unpaidType = await request("/api/leave-types", {
-    jar: adminJar, csrf: adminCsrf, method: "POST",
-    body: { name: "Synthetic Unpaid Leave", paid: false },
-  });
-  assert.equal(unpaidType.status, 201);
-  const unpaidLeaveTypeId = adminDb.prepare("SELECT id FROM leave_types WHERE name = ?").get("Synthetic Unpaid Leave").id;
-  const leave = await request("/api/leave", {
-    jar: employeeJar,
-    csrf: employeeCsrf,
-    method: "POST",
-    body: { leaveTypeId: unpaidLeaveTypeId, startDate: "2026-11-10", endDate: "2026-11-10", reason: "Synthetic unpaid leave test" },
+  const leave = await request("/api/personal-leave", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: {
+      reasonCategory: "emergency", details: "Synthetic multi-day personal leave",
+      startDate: "2026-11-10", endDate: "2026-11-11",
+    },
   });
   assert.equal(leave.status, 201);
-  assert.equal(leave.payload.payTreatment, "unpaid");
+  assert.equal(leave.payload.status, "pending");
+  assert.equal(leave.payload.exemption, false);
   const ownApproval = await request(`/api/leave/${leave.payload.id}/approve`, { jar: employeeJar, csrf: employeeCsrf, method: "POST", body: {} });
   assert.equal(ownApproval.status, 403);
 
