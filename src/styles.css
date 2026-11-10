@@ -8237,3 +8237,6 @@ button.hub-tab:hover { background:#f5f9ff; border-color:#a5caef; }
   .hub-calendar-day .holiday-glyph { font-size: 1rem; }
   .ceo-holiday-manager .holiday-correct-form input { min-width: 0; width: 100%; }
 }
+
+.hub-calendar-header .calendar-today-caption { font-size: .81rem; color: #275a9b; margin-top: 7px; }
+.hub-calendar-header .calendar-today-caption strong { color: #134c99; font-weight: 750; }
