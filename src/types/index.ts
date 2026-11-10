@@ -117,6 +117,9 @@ export type Leave = {
   status: string;
   workingDays?: number;
   payTreatment?: PayTreatment;
+  policyMode?: "legacy" | "personal";
+  reasonCategory?: string;
+  exemptionDay?: number;
   requiresCeoApproval?: number;
   excessDays?: number;
   ceoDecisionNotes?: string;
@@ -172,10 +175,11 @@ export type PolicyResponse = {
   absenceWarningHours: number;
 };
 
-export type Section = "overview" | "applications" | "employees" | "attendance" | "leave" | "payroll" | "settings" | "audit";
+export type Section = "profile" | "overview" | "applications" | "employees" | "attendance" | "leave" | "payroll" | "settings" | "audit";
 
 export const sectionTitles: Record<Section, string> = {
   overview: "Overview",
+  profile: "My Profile",
   applications: "Applications",
   employees: "People directory",
   attendance: "Attendance",
