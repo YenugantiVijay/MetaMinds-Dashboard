@@ -574,3 +574,23 @@ test("Scenario 12 — Full-page profile editor and reason-only leave calendar wo
   await page.getByLabel("Please mention your reason (required)").fill("Synthetic family event");
   assert.equal(await page.getByLabel("Please mention your reason (required)").inputValue(),"Synthetic family event");
 });
+
+test("Scenario 13 — Calendar highlights company-local today and restores it after browsing months", async () => {
+  await page.getByRole("heading", { name: "Leave & Calendar", exact: true }).waitFor({ state: "visible" });
+  const serverSnapshot = await page.evaluate(async () => {
+    const response = await fetch("/api/company-calendar", { credentials: "include" });
+    if (!response.ok) throw new Error("Calendar API unavailable");
+    return response.json();
+  });
+  assert.match(serverSnapshot.today, /^\d{4}-\d{2}-\d{2}$/);
+  const todayCell = page.locator('.hub-calendar-day[aria-current="date"]');
+  await todayCell.waitFor({ state: "visible" });
+  assert.match((await todayCell.getAttribute("aria-label")) || "", new RegExp(serverSnapshot.today));
+  await page.getByRole("button", { name: "Previous month" }).click();
+  await page.getByRole("button", { name: "Jump to today's date" }).click();
+  await todayCell.waitFor({ state: "visible" });
+  assert.equal(await todayCell.count(), 1);
+  const observances = serverSnapshot.observances;
+  assert.ok(observances.some((entry) => entry.name === "Ratha Yatra"));
+  assert.ok(serverSnapshot.holidays.some((entry) => entry.name === "Bhogi"));
+});
