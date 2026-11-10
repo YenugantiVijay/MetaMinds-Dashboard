@@ -6,7 +6,9 @@ import { Button } from "../../components/ui/Button";
 import { CustomDatePicker } from "../../components/ui/CustomDatePicker";
 import { calculateWorkingDaysClient } from "../leave/LeavePage";
 
-type Holiday = { id: number; holidayDate: string; name: string };
+type Holiday = { id: number; holidayDate: string; name: string; kind?: "government" | "ceo" | "legacy"; sourceUrl?: string | null; note?: string | null };
+type Observance = { date: string; name: string; icon: string; sourceUrl?: string | null };
+type CompanyCalendar = { today: string; timezone: string; holidays: Holiday[]; observances: Observance[] };
 type Quota = { year: number; entitled: number; used: number; remaining: number };
 const reasons = [
   { id: "personal", label: "Personal work" }, { id: "medical", label: "Medical / health" },
@@ -17,13 +19,24 @@ const reasons = [
 function holidaySymbol(name: string) {
   const value = name.toLowerCase();
   if (/independence|republic|gandhi|constitution/.test(value)) return "🇮🇳";
+  if (/bhogi/.test(value)) return "🔥";
+  if (/sankranti|pongal/.test(value)) return "🪁";
+  if (/kanuma/.test(value)) return "🐄";
+  if (/shivaratri|sivaratri/.test(value)) return "🔱";
+  if (/holi/.test(value)) return "🎨";
+  if (/ugadi/.test(value)) return "🌿";
+  if (/rama navami|srirama/.test(value)) return "🏹";
+  if (/varalakshmi|vara lakshmi/.test(value)) return "🪷";
+  if (/krishna|janmashtami/.test(value)) return "🪈";
+  if (/vinayaka|ganesh|chavithi/.test(value)) return "🐘";
+  if (/durgashtami|durga ashtami/.test(value)) return "🌺";
+  if (/vijaya dasami|dussehra|dasara/.test(value)) return "🏹";
   if (/diwali|deepavali|karthika/.test(value)) return "🪔";
   if (/christmas/.test(value)) return "🎄";
   if (/eid|ramzan|bakrid|muharram|milad/.test(value)) return "🌙";
-  if (/sankranti|pongal|ugadi|onam|bihu/.test(value)) return "🌾";
-  if (/ganesh|vinayaka/.test(value)) return "🌺";
-  if (/holi|dussehra|dasara|navratri|durga/.test(value)) return "🌸";
-  return "✦";
+  if (/ambedkar|jagjivan/.test(value)) return "📘";
+  if (/good friday/.test(value)) return "✝️";
+  return "🎉";
 }
 function toDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
@@ -33,6 +46,10 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
 }) {
   const [rows, setRows] = useState<Leave[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [observances, setObservances] = useState<Observance[]>([]);
+  const [today, setToday] = useState("");
+  const [companyTimezone, setCompanyTimezone] = useState("Asia/Kolkata");
+  const [calendarInitialized, setCalendarInitialized] = useState(false);
   const [quota, setQuota] = useState<Quota|null>(null);
   const [month, setMonth] = useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1));
   const [form, setForm] = useState({ reasonCategory:"", details:"", startDate:"", endDate:"" });
@@ -42,16 +59,45 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
 
   const load = useCallback(async ()=>{
     try {
-      const [requests, publicHolidays, yearlyQuota] = await Promise.all([
+      const [requests, calendar, yearlyQuota] = await Promise.all([
         api<Leave[]>("/api/leave"),
-        api<Holiday[]>("/api/company-holidays"),
+        api<CompanyCalendar>("/api/company-calendar"),
         api<Quota>("/api/personal-leave/quota"),
       ]);
-      setRows(requests);setHolidays(publicHolidays);setQuota(yearlyQuota);
+      setRows(requests);setHolidays(calendar.holidays);
+      setObservances(calendar.observances);setToday(calendar.today);
+      setCompanyTimezone(calendar.timezone);
+      setQuota(yearlyQuota);
       setError("");
     } catch (err) { setError(err instanceof Error ? err.message : "Could not load leave calendar."); }
   }, []);
   useEffect(()=>{void load();},[load]);
+  // Obtain today's date from the backend's configured company timezone.
+  // Refresh after midnight and on return to the tab, even if the page stays open.
+  useEffect(() => {
+    let active = true;
+    async function refreshToday() {
+      try {
+        const latest = await api<CompanyCalendar>("/api/company-calendar");
+        if (!active) return;
+        setToday(latest.today);
+        setCompanyTimezone(latest.timezone);
+        setHolidays(latest.holidays);
+        setObservances(latest.observances);
+      } catch { /* Keep the last confirmed server date if temporarily offline. */ }
+    }
+    const timer = window.setInterval(() => { void refreshToday(); }, 60000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshToday(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+  useEffect(() => {
+    if (!calendarInitialized && /^\d{4}-\d{2}-\d{2}$/.test(today)) {
+      const [year, monthNo] = today.split("-").map(Number);
+      setMonth(new Date(year,monthNo-1,1));
+      setCalendarInitialized(true);
+    }
+  }, [today,calendarInitialized]);
   // The annual exemption belongs to the year of the requested date, not
   // necessarily the employee's current calendar year.
   useEffect(() => {
@@ -69,6 +115,11 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
   }, [form.startDate]);
 
   const holidayMap = useMemo(()=>new Map(holidays.map(item=>[item.holidayDate,item])),[holidays]);
+  const observanceMap = useMemo(()=>{
+    const map = new Map<string,Observance[]>();
+    for (const item of observances) map.set(item.date,[...(map.get(item.date)||[]),item]);
+    return map;
+  },[observances]);
   const leaveDays = useMemo(()=>{
     const map=new Map<string,Leave[]>();
     for(const row of rows){
@@ -94,7 +145,7 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
   },[month]);
   const requestWorkingDays=form.startDate&&form.endDate?
     calculateWorkingDaysClient(form.startDate,form.endDate,new Set(holidays.map(x=>x.holidayDate))):0;
-  const chosen=selectedDate?{holiday:holidayMap.get(selectedDate),leaves:leaveDays.get(selectedDate)||[]}:null;
+  const chosen=selectedDate?{holiday:holidayMap.get(selectedDate),observances:observanceMap.get(selectedDate)||[],leaves:leaveDays.get(selectedDate)||[]}:null;
 
   async function submit(event:FormEvent){
     event.preventDefault();setSubmitting(true);setError("");
@@ -125,10 +176,18 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
         <section className="hub-card hub-calendar-card">
           <div className="hub-calendar-header">
             <div className="hub-card-title"><CalendarDays size={19}/><div><h2>Company holiday calendar</h2>
-              <p>Government holidays approved for the company, plus your personal requests.</p></div></div>
+              <p>Government holidays approved for the company, plus your personal requests.</p>
+              {today && <p className="calendar-today-caption" role="status">
+                Today: <strong>{new Intl.DateTimeFormat("en-IN", {
+                  day: "numeric", month: "long", year: "numeric", weekday: "long", timeZone: "UTC",
+                }).format(new Date(`${today}T12:00:00.000Z`))}</strong> · {companyTimezone}
+              </p>}</div></div>
             <div className="hub-month-nav">
               <button type="button" aria-label="Previous month" onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()-1,1))}><ChevronLeft size={18}/></button>
               <strong>{new Intl.DateTimeFormat("en-IN",{month:"long",year:"numeric"}).format(month)}</strong>
+              <button type="button" className="calendar-today-nav" onClick={()=>{
+                if (today) { const [y,m]=today.split("-").map(Number); setMonth(new Date(y,m-1,1)); setSelectedDate(today); }
+              }} aria-label="Jump to today's date">Today</button>
               <button type="button" aria-label="Next month" onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()+1,1))}><ChevronRight size={18}/></button>
             </div>
           </div>
@@ -136,31 +195,40 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
             {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(day=><div key={day} className="hub-calendar-weekday">{day}</div>)}
             {days.map(day=>{
               const holiday=holidayMap.get(day.key);
+              const dayObservances=observanceMap.get(day.key)||[];
               const personal=leaveDays.get(day.key);
+              const isToday=day.key===today;
               const hasApproved=personal?.some(row=>row.status==="approved");
               const isWeeklyOff=day.weekDay===0||(day.weekDay===6&&day.date>=8&&day.date<=14);
-              return <button key={day.key} type="button" title={[day.key,holiday?.name,personal?.map(r=>`${r.reason}: ${r.status}`).join(", "),isWeeklyOff?"Weekly off":""].filter(Boolean).join(" · ")}
-                aria-label={`${day.key}${holiday?", "+holiday.name:""}${personal?.length?", personal leave "+personal.map(r=>r.status).join(", "):""}`}
+              return <button key={day.key} type="button" title={[day.key,isToday?"Today":"",holiday?.name,dayObservances.map(r=>r.name).join(", "),personal?.map(r=>`${r.reason}: ${r.status}`).join(", "),isWeeklyOff?"Weekly off":""].filter(Boolean).join(" · ")}
+                aria-label={`${day.key}${isToday?", today":""}${holiday?", company holiday: "+holiday.name:""}${dayObservances.length?", observance: "+dayObservances.map(r=>r.name).join(", "):""}${personal?.length?", personal leave "+personal.map(r=>r.status).join(", "):""}`}
+                aria-current={isToday ? "date" : undefined}
                 aria-pressed={selectedDate===day.key}
                 onClick={()=>setSelectedDate(day.key)}
-                className={["hub-calendar-day",!day.inMonth?"out-month":"",holiday?"holiday-day":"",personal?.length?(hasApproved?"personal-approved":"personal-pending"):"",isWeeklyOff?"weekly-off":"",selectedDate===day.key?"selected-day":""].filter(Boolean).join(" ")}>
+                className={["hub-calendar-day",!day.inMonth?"out-month":"",holiday?"holiday-day":"",holiday?.kind==="ceo"?"ceo-closure-day":"",!holiday&&dayObservances.length?"observance-day":"",personal?.length?(hasApproved?"personal-approved":"personal-pending"):"",isWeeklyOff?"weekly-off":"",isToday?"calendar-is-today":"",selectedDate===day.key?"selected-day":""].filter(Boolean).join(" ")}>
                 <span className="calendar-date-number">{day.date}</span>
-                {holiday&&<span className="holiday-glyph" aria-hidden="true">{holidaySymbol(holiday.name)}</span>}
-                {personal?.length&&!holiday&&<span className="personal-glyph" aria-hidden="true">{hasApproved?"●":"◌"}</span>}
+                {holiday&&<span className="holiday-glyph" aria-hidden="true">{holiday.kind==="ceo"?"🏢":holidaySymbol(holiday.name)}</span>}
+                {!holiday&&dayObservances.length>0&&<span className="holiday-glyph observance-glyph" aria-hidden="true">{dayObservances[0].icon}</span>}
+                {personal?.length&&<span className="personal-glyph" aria-hidden="true">{hasApproved?"●":"◌"}</span>}
+                {isToday&&<span className="today-tag" aria-hidden="true">Today</span>}
               </button>;
             })}
           </div>
           <div className="hub-calendar-legend">
-            <span><span className="legend-symbol govt">✦</span> Government / company holiday</span>
+            <span><span className="legend-symbol govt">🪔</span> Verified government holiday</span>
+            <span><span className="legend-symbol ceo">🏢</span> CEO-declared day off</span>
+            <span><span className="legend-symbol observance">🌸</span> Festival observance (working day)</span>
+            <span><span className="legend-symbol today">●</span> Today</span>
             <span><span className="legend-symbol personal">●</span> Approved personal leave</span>
             <span><span className="legend-symbol pending">◌</span> Pending personal leave</span>
             <span><span className="legend-symbol weekly">·</span> Weekly off</span>
           </div>
           {chosen&&<div className="hub-selected-date" role="status">
             <strong>{formatDate(selectedDate!)}</strong>
-            {chosen.holiday&&<span>Company holiday: {chosen.holiday.name}</span>}
+            {chosen.holiday&&<span>Company holiday: {chosen.holiday.name}{chosen.holiday.kind==="ceo"?" (declared by CEO)":""}</span>}
+            {chosen.observances.map(item=><span key={item.name}>Festival observance: {item.icon} {item.name} (not a company day off)</span>)}
             {chosen.leaves.map(row=><span key={row.id}>Your leave: {row.reason} — {row.status}</span>)}
-            {!chosen.holiday&&!chosen.leaves.length&&<span>No leave or company holiday recorded.</span>}
+            {!chosen.holiday&&!chosen.leaves.length&&!chosen.observances.length&&<span>No leave or company holiday recorded.</span>}
           </div>}
         </section>
         <aside className="hub-policy-card">
@@ -169,7 +237,7 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
           <p><Umbrella size={16}/> One eligible exemption day per calendar year.</p>
           <p><Clock3 size={16}/> Further leave requests require CEO approval.</p>
           <div className="hub-quota"><strong>{quota?.remaining??"—"} of 1</strong><span>Exemption day available in {quota?.year??new Date().getFullYear()}</span></div>
-          <small>Dates are maintained by company administration. Check official holiday announcements for changes.</small>
+          <small>Festival dates can change by official notice. The CEO updates the company calendar after verifying revised announcements. Company timezone: {companyTimezone}.</small>
         </aside>
       </div>
       {error&&<p className="form-error-banner" role="alert">{error}</p>}

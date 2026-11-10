@@ -17,7 +17,17 @@ export function SettingsPage({ notify }: SettingsPageProps) {
   const [ceoNotificationConfigured, setCeoNotificationConfigured] = useState(false);
   const [pendingEmails, setPendingEmails] = useState(0);
   const [failedEmails, setFailedEmails] = useState(0);
-  const [holidays, setHolidays] = useState<Array<{ id: number; holidayDate: string; name: string }>>([]);
+  const [holidays, setHolidays] = useState<Array<{
+    id: number; holidayDate: string; name: string;
+    kind?: "government" | "ceo" | "legacy";
+    sourceUrl?: string | null; note?: string | null;
+  }>>([]);
+  const [companyToday, setCompanyToday] = useState("");
+  const [holidayEndDate, setHolidayEndDate] = useState("");
+  const [holidayNote, setHolidayNote] = useState("");
+  const [adjustingHolidayId, setAdjustingHolidayId] = useState<number | null>(null);
+  const [adjustedDate, setAdjustedDate] = useState("");
+  const [adjustedSource, setAdjustedSource] = useState("");
   const [holidayDate, setHolidayDate] = useState("");
   const [holidayName, setHolidayName] = useState("");
   const [holidayBusy, setHolidayBusy] = useState(false);
@@ -26,7 +36,7 @@ export function SettingsPage({ notify }: SettingsPageProps) {
 
   const load = useCallback(async () => {
     try {
-      const [result, holidayRows] = await Promise.all([
+      const [result, calendar] = await Promise.all([
         api<{
           settings: Record<string, string>;
           emailConfigured: boolean;
@@ -34,9 +44,17 @@ export function SettingsPage({ notify }: SettingsPageProps) {
           pendingEmails: number;
           failedEmails: number;
         }>("/api/settings"),
-        api<Array<{ id: number; holidayDate: string; name: string }>>("/api/company-holidays"),
+        api<{
+          today: string;
+          holidays: Array<{
+            id: number; holidayDate: string; name: string;
+            kind?: "government" | "ceo" | "legacy";
+            sourceUrl?: string | null; note?: string | null;
+          }>;
+        }>("/api/company-calendar"),
       ]);
-      setHolidays(holidayRows);
+      setHolidays(calendar.holidays);
+      setCompanyToday(calendar.today);
       setSettings(result.settings);
       setEmailConfigured(result.emailConfigured);
       setCeoNotificationConfigured(result.ceoNotificationConfigured);
@@ -85,18 +103,25 @@ export function SettingsPage({ notify }: SettingsPageProps) {
 
   async function addHoliday() {
     if (!holidayDate || !holidayName.trim()) {
-      notify("Enter a holiday date and name.", "error");
+      notify("Enter a company closure date and name.", "error");
       return;
     }
     setHolidayBusy(true);
     try {
-      await api("/api/company-holidays", {
+      const response = await api<{ count: number }>("/api/company-holidays/declare", {
         method: "POST",
-        body: JSON.stringify({ date: holidayDate, name: holidayName }),
+        body: JSON.stringify({
+          startDate: holidayDate,
+          endDate: holidayEndDate || holidayDate,
+          name: holidayName,
+          note: holidayNote,
+        }),
       });
       setHolidayDate("");
+      setHolidayEndDate("");
       setHolidayName("");
-      notify("Company holiday added.");
+      setHolidayNote("");
+      notify(`${response.count} company day(s) off declared. Employees have been notified.`);
       await load();
     } catch (error) {
       notify(error instanceof Error ? error.message : "Could not add company holiday.", "error");
@@ -120,6 +145,29 @@ export function SettingsPage({ notify }: SettingsPageProps) {
       setHolidayBusy(false);
     }
   }
+
+  async function correctHolidayDate() {
+    if (!adjustingHolidayId || !adjustedDate) {
+      notify("Select the corrected date.", "error");
+      return;
+    }
+    setHolidayBusy(true);
+    try {
+      await api("/api/company-holidays/reschedule", {
+        method: "POST",
+        body: JSON.stringify({ id: adjustingHolidayId, date: adjustedDate, sourceUrl: adjustedSource }),
+      });
+      setAdjustingHolidayId(null);
+      setAdjustedDate("");
+      setAdjustedSource("");
+      notify("Holiday date corrected. Employees have been notified.");
+      await load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not correct holiday date.", "error");
+    } finally { setHolidayBusy(false); }
+  }
+
+  const upcomingHolidays = holidays.filter((item) => !companyToday || item.holidayDate >= companyToday);
 
   if (loading) return <LoadingState />;
 
@@ -245,78 +293,111 @@ export function SettingsPage({ notify }: SettingsPageProps) {
             </label>
           </div>
         </section>
-        <section className="panel settings-panel">
+        <section className="panel settings-panel ceo-holiday-manager" aria-label="CEO company holidays">
           <div className="panel-heading">
             <div>
-              <h2>Company holiday calendar</h2>
-              <p>One shared calendar drives leave previews and server-side working-day calculations.</p>
+              <h2>Company holidays &amp; CEO-declared days off</h2>
+              <p>Declare unplanned single-day or multi-day closures, and review verified festival dates.</p>
             </div>
             <CalendarDays size={18} />
           </div>
+          <p className="ceo-holiday-help">
+            Only the CEO can change the company holiday calendar. Government holidays follow the
+            verified Andhra Pradesh 2026 notification. If a festival date changes, correct the
+            upcoming holiday with an updated official source. Optional festival observances
+            shown to employees are not automatically days off.
+          </p>
           <div className="settings-grid">
             <label>
-              Holiday date
-              <input type="date" value={holidayDate} onChange={(event) => setHolidayDate(event.target.value)} />
+              First day off
+              <input type="date" min={companyToday || undefined} value={holidayDate}
+                onChange={(event) => { setHolidayDate(event.target.value); setHolidayEndDate(""); }} />
             </label>
             <label>
-              Holiday name
-              <input
-                maxLength={120}
-                value={holidayName}
+              Last day off (optional)
+              <input type="date" min={holidayDate || companyToday || undefined} value={holidayEndDate}
+                onChange={(event) => setHolidayEndDate(event.target.value)} />
+              <small>Leave blank to declare one day. Up to 31 consecutive days.</small>
+            </label>
+            <label>
+              Name / occasion
+              <input maxLength={120} value={holidayName}
                 onChange={(event) => setHolidayName(event.target.value)}
-                placeholder="e.g. Company Foundation Day"
-              />
+                placeholder="e.g. Company special holiday, local festival" />
+            </label>
+            <label>
+              Reason or details (optional)
+              <input maxLength={500} value={holidayNote}
+                onChange={(event) => setHolidayNote(event.target.value)}
+                placeholder="e.g. Company annual celebration" />
             </label>
             <div className="settings-holiday-action">
-              <Button
-                type="button"
-                disabled={holidayBusy || !holidayDate || !holidayName.trim()}
-                onClick={() => void addHoliday()}
-              >
-                Add company holiday
+              <Button type="button" disabled={holidayBusy || !holidayDate || !holidayName.trim()}
+                onClick={() => void addHoliday()}>
+                {holidayBusy ? "Saving…" : "Declare company day off"}
               </Button>
             </div>
           </div>
-          {holidays.length ? (
+          {upcomingHolidays.length ? (
             <div className="table-scroll">
               <table>
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Holiday</th>
-                    <th>Action</th>
+                <thead><tr><th>Date</th><th>Holiday / occasion</th><th>Category</th><th>Actions</th></tr></thead>
+                <tbody>{upcomingHolidays.map((holiday) => (
+                  <tr key={holiday.id}>
+                    <td>{formatDate(holiday.holidayDate)}</td>
+                    <td><strong>{holiday.name}</strong>
+                      {holiday.note && <small className="table-sub">{holiday.note}</small>}
+                      {holiday.sourceUrl && <small className="table-sub">
+                        <a className="holiday-source-link" href={holiday.sourceUrl} target="_blank" rel="noopener noreferrer">
+                          Official source
+                        </a>
+                      </small>}
+                    </td>
+                    <td><span className={`holiday-kind ${holiday.kind === "ceo" ? "ceo" : ""}`}>
+                      {holiday.kind === "government" ? "Government" : holiday.kind === "ceo" ? "CEO-declared" : "Previously configured"}
+                    </span></td>
+                    <td>
+                      {holiday.holidayDate > companyToday ? (
+                        <div className="hub-save-actions">
+                          <Button type="button" variant="quiet" disabled={holidayBusy}
+                            onClick={() => {
+                              setAdjustingHolidayId(holiday.id);
+                              setAdjustedDate(holiday.holidayDate);
+                              setAdjustedSource("");
+                            }}>Correct date</Button>
+                          {holiday.kind !== "government" && <Button type="button" variant="quiet"
+                            disabled={holidayBusy} onClick={() => void removeHoliday(holiday.id)}>Remove</Button>}
+                        </div>
+                      ) : <span className="muted-cell">Today — locked</span>}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {holidays.map((holiday) => (
-                    <tr key={holiday.id}>
-                      <td>{formatDate(holiday.holidayDate)}</td>
-                      <td>{holiday.name}</td>
-                      <td>
-                        <Button
-                          type="button"
-                          variant="quiet"
-                          disabled={holidayBusy || false}
-                          onClick={() => void removeHoliday(holiday.id)}
-                        >
-                          Remove
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
+                ))}</tbody>
               </table>
             </div>
           ) : (
-            <EmptyState
-              title="No company holidays configured"
-              detail="Add company holidays to keep leave previews and approvals aligned."
-              icon={<CalendarDays size={22} />}
-            />
+            <EmptyState title="No upcoming holidays configured"
+              detail="Declare an additional company day off or verify the annual government holiday register."
+              icon={<CalendarDays size={22} />} />
+          )}
+          {adjustingHolidayId !== null && (
+            <div className="holiday-correct-form" role="group" aria-label="Correct future holiday date">
+              <label>Corrected date
+                <input type="date" min={companyToday || undefined} value={adjustedDate}
+                  onChange={(event) => setAdjustedDate(event.target.value)}/>
+              </label>
+              <label>Updated official notice URL
+                <input type="url" maxLength={500} placeholder="https://…"
+                  value={adjustedSource} onChange={(event) => setAdjustedSource(event.target.value)}/>
+                <small>Required for government holidays.</small>
+              </label>
+              <Button type="button" disabled={holidayBusy || !adjustedDate}
+                onClick={() => void correctHolidayDate()}>Save corrected date</Button>
+              <Button type="button" variant="secondary" onClick={() => setAdjustingHolidayId(null)}>Cancel</Button>
+            </div>
           )}
           <p className="settings-footnote">
-            Past and current holidays are locked to preserve historical leave calculations. New and future
-            holidays can be managed here.
+            Dates already in progress or past cannot be removed or rescheduled. Future changes are
+            audited and reflected in employee leave and attendance calculations.
           </p>
         </section>
         <section className="panel settings-panel">

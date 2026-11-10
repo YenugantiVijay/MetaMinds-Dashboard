@@ -1890,34 +1890,135 @@ async function route(req, res, context, body, url) {
     });
     return { status: 200, body: { ok: true, status: decision, payTreatment: finalPayTreatment } };
   }
+  // Single server-authoritative calendar snapshot: date follows the company timezone.
+  if (method === "GET" && path === "/api/company-calendar") {
+    requireUser(context);
+    return { status: 200, body: {
+      today: currentDateInZone(),
+      timezone: getSetting("timezone") || "Asia/Kolkata",
+      holidays: db.prepare(`
+        SELECT id, holiday_date AS holidayDate, name, kind,
+               source_url AS sourceUrl, note
+        FROM company_holidays ORDER BY holiday_date
+      `).all(),
+      observances: db.prepare(`
+        SELECT observance_date AS date, name, icon, source_url AS sourceUrl
+        FROM calendar_observances ORDER BY observance_date, name
+      `).all(),
+    } };
+  }
   if (method === "GET" && path === "/api/company-holidays") {
     requireUser(context);
-    return {
-      status: 200,
-      body: db.prepare("SELECT id, holiday_date AS holidayDate, name FROM company_holidays ORDER BY holiday_date").all(),
-    };
+    return { status: 200, body: db.prepare(`
+      SELECT id, holiday_date AS holidayDate, name, kind,
+             source_url AS sourceUrl, note, revised_at AS revisedAt
+      FROM company_holidays ORDER BY holiday_date
+    `).all() };
   }
+  // Single-day company closure: existing compatibility endpoint, CEO-only.
   if (method === "POST" && path === "/api/company-holidays") {
     const user = requireUser(context);
     requireRole(user, "ceo");
     const holidayDate = validDate(body.date, "Holiday date");
     if (holidayDate < currentDateInZone()) fail(400, "New company holidays must be today or a future date.");
     const name = requiredString(body.name, "Holiday name", 120, 2);
-    if (db.prepare("SELECT 1 FROM company_holidays WHERE holiday_date = ?").get(holidayDate)) {
+    if (db.prepare("SELECT 1 FROM company_holidays WHERE holiday_date = ?").get(holidayDate))
       fail(409, "A company holiday already exists on that date.");
-    }
-    const result = db.prepare("INSERT INTO company_holidays(holiday_date, name) VALUES (?, ?)").run(holidayDate, name);
-    audit(user.user_id, "company_holiday.created", "company_holiday", result.lastInsertRowid);
-    return { status: 201, body: { id: Number(result.lastInsertRowid), holidayDate, name } };
+    const result = withTransaction(() => {
+      const inserted = db.prepare(`
+        INSERT INTO company_holidays(holiday_date, name, kind, created_by)
+        VALUES (?, ?, 'ceo', ?)
+      `).run(holidayDate, name, user.user_id);
+      audit(user.user_id, "company_holiday.created", "company_holiday", inserted.lastInsertRowid);
+      return inserted;
+    });
+    return { status: 201, body: { id: Number(result.lastInsertRowid), holidayDate, name, kind: "ceo" } };
+  }
+  // The CEO can declare any unplanned future multi-day closure, including today.
+  if (method === "POST" && path === "/api/company-holidays/declare") {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const startDate = validDate(body.startDate, "Start date");
+    const endDate = validDate(body.endDate, "End date");
+    const name = requiredString(body.name, "Closure name", 120, 2);
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    if (note.length > 500) fail(400, "Closure note must not exceed 500 characters.");
+    if (startDate < currentDateInZone()) fail(400, "The closure must start today or later.");
+    if (endDate < startDate) fail(400, "End date cannot precede start date.");
+    const startMs = Date.parse(startDate + "T12:00:00.000Z");
+    const endMs = Date.parse(endDate + "T12:00:00.000Z");
+    const days = Math.round((endMs - startMs) / 86400000) + 1;
+    if (!Number.isSafeInteger(days) || days < 1 || days > 31)
+      fail(400, "Declare up to 31 consecutive days per request.");
+    const collision = db.prepare(`
+      SELECT holiday_date, name FROM company_holidays
+      WHERE holiday_date BETWEEN ? AND ? LIMIT 1
+    `).get(startDate, endDate);
+    if (collision) fail(409, `A holiday is already configured on ${collision.holiday_date}. Review the calendar first.`);
+    const inserted = withTransaction(() => {
+      const rows = [];
+      for (let day = 0; day < days; day += 1) {
+        const date = new Date(startMs + day * 86400000).toISOString().slice(0,10);
+        const row = db.prepare(`
+          INSERT INTO company_holidays(holiday_date,name,kind,note,created_by)
+          VALUES (?,?,'ceo',?,?)
+        `).run(date,name,note || null,user.user_id);
+        rows.push({ id: Number(row.lastInsertRowid), holidayDate: date });
+        audit(user.user_id, "company_holiday.declared", "company_holiday", row.lastInsertRowid);
+      }
+      for (const person of db.prepare("SELECT id FROM users WHERE active = 1 AND role IN ('employee','team_lead')").all()) {
+        notifyUser(person.id, "holiday", "Company day off declared",
+          `${name}: ${startDate}${endDate !== startDate ? " to " + endDate : ""}. ${note}`.trim());
+      }
+      return rows;
+    });
+    return { status: 201, body: { dates: inserted, name, count: inserted.length } };
+  }
+  // Verified changes to a festival's officially announced date are CEO controlled.
+  if (method === "POST" && path === "/api/company-holidays/reschedule") {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const id = Number(body.id);
+    if (!Number.isSafeInteger(id) || id <= 0) fail(400, "A valid holiday is required.");
+    const existing = db.prepare("SELECT * FROM company_holidays WHERE id = ?").get(id);
+    if (!existing) fail(404, "Holiday not found.");
+    const nextDate = validDate(body.date, "Corrected holiday date");
+    if (existing.holiday_date <= currentDateInZone() || nextDate <= currentDateInZone())
+      fail(409, "Past and current company holiday dates are locked; only future dates can be moved.");
+    const existingTarget = db.prepare("SELECT id FROM company_holidays WHERE holiday_date = ? AND id <> ?")
+      .get(nextDate,id);
+    if (existingTarget) fail(409, "A different company holiday already exists on the selected date.");
+    const sourceUrl = typeof body.sourceUrl === "string" ? body.sourceUrl.trim() : "";
+    if (sourceUrl.length > 500 || (sourceUrl && !/^https:\/\//i.test(sourceUrl)))
+      fail(400, "Provide an HTTPS official source URL of up to 500 characters.");
+    if (existing.kind === "government" && !sourceUrl)
+      fail(400, "Provide the updated official notice URL before changing a government holiday.");
+    const nextName = body.name === undefined ? existing.name : requiredString(body.name, "Holiday name", 120, 2);
+    const note = typeof body.note === "string" ? body.note.trim() : existing.note;
+    if (note?.length > 500) fail(400, "The note is too long.");
+    withTransaction(() => {
+      db.prepare(`
+        UPDATE company_holidays SET holiday_date=?, name=?, source_url=?,
+          note=?, revised_at=? WHERE id=?
+      `).run(nextDate,nextName,sourceUrl || existing.source_url,note || null,timestamp(),id);
+      audit(user.user_id,"company_holiday.rescheduled","company_holiday",id);
+      for (const person of db.prepare("SELECT id FROM users WHERE active=1 AND role IN ('employee','team_lead')").all()) {
+        notifyUser(person.id,"holiday","Company holiday date updated",
+          `${nextName}: moved from ${existing.holiday_date} to ${nextDate}.`);
+      }
+    });
+    return { status:200,body:{ ok:true,id, holidayDate:nextDate,name:nextName } };
   }
   if (method === "POST" && path === "/api/company-holidays/remove") {
     const user = requireUser(context);
     requireRole(user, "ceo");
     const id = Number(body.id);
-    if (!Number.isInteger(id) || id <= 0) fail(400, "A valid holiday ID is required.");
-    const holiday = db.prepare("SELECT id, holiday_date, name FROM company_holidays WHERE id = ?").get(id);
+    if (!Number.isSafeInteger(id) || id <= 0) fail(400, "A valid holiday ID is required.");
+    const holiday = db.prepare("SELECT id,holiday_date,name,kind FROM company_holidays WHERE id = ?").get(id);
     if (!holiday) fail(404, "Company holiday not found.");
     if (holiday.holiday_date <= currentDateInZone()) fail(409, "Past and current company holidays cannot be removed.");
+    if (holiday.kind === "government")
+      fail(403, "Verified government holidays cannot be deleted. Use a new official notification to correct future dates.");
     withTransaction(() => {
       db.prepare("DELETE FROM company_holidays WHERE id = ?").run(id);
       audit(user.user_id, "company_holiday.removed", "company_holiday", id);
