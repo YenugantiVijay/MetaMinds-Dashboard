@@ -1772,6 +1772,8 @@ async function route(req, res, context, body, url) {
   if (selfServiceResponse) return selfServiceResponse;
 
   if (method === "POST" && path === "/api/leave") {
+    requireUser(context);
+    fail(410, "This leave form has been replaced. Submit a reason-based personal leave request.");
     const user = requireUser(context);
     const employee = getEmployeeForUser(user);
     const leaveTypeId = Number(body.leaveTypeId);
