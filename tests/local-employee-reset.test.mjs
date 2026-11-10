@@ -63,7 +63,7 @@ test("full fresh-start removes employee applications, attendance and feed but pr
     ]) {
       assert.equal(cleaned.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, table);
     }
-    assert.deepEqual(cleaned.prepare("SELECT id,email,role,password_hash,active FROM users").all(),
+    assert.deepEqual(cleaned.prepare("SELECT id,email,role,password_hash,active FROM users").all().map((row) => ({ ...row })),
       [{id:1,email:"demo.ceo@metaminds.local",role:"ceo",password_hash:"original-ceo-hash",active:1}]);
     assert.equal(cleaned.prepare("PRAGMA foreign_key_check").all().length, 0);
     assert.equal(cleaned.prepare("SELECT name FROM company_holidays WHERE holiday_date='2027-02-01'").get().name,
