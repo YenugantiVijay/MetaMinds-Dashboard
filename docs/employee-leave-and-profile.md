@@ -2,7 +2,7 @@
 
 ## Scope
 
-This feature introduces the November 2026 company policy: **one calendar-year exemption day** for each employee, with subsequent personal leave requests reviewed by the CEO. It does **not** establish paid/unpaid payroll treatment. Existing historical paid-leave records, leave balances, and payroll safeguards remain untouched for audit purposes.
+This feature introduces the November 2026 company policy: **one calendar-year exemption day** for each employee, with subsequent personal leave requests reviewed by the CEO. It does **not** establish paid/unpaid payroll treatment. New personal requests and CEO decisions keep `pay_treatment = NULL` (undetermined); neither request nor approval changes payroll. Existing historical paid-leave records, leave balances, and payroll safeguards remain untouched for audit purposes.
 
 ### Company holidays
 
