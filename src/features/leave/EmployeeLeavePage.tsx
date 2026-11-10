@@ -176,7 +176,12 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
         <section className="hub-card hub-calendar-card">
           <div className="hub-calendar-header">
             <div className="hub-card-title"><CalendarDays size={19}/><div><h2>Company holiday calendar</h2>
-              <p>Government holidays approved for the company, plus your personal requests.</p></div></div>
+              <p>Government holidays approved for the company, plus your personal requests.</p>
+              {today && <p className="calendar-today-caption" role="status">
+                Today: <strong>{new Intl.DateTimeFormat("en-IN", {
+                  day: "numeric", month: "long", year: "numeric", weekday: "long", timeZone: "UTC",
+                }).format(new Date(`${today}T12:00:00.000Z`))}</strong> · {companyTimezone}
+              </p>}</div></div>
             <div className="hub-month-nav">
               <button type="button" aria-label="Previous month" onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()-1,1))}><ChevronLeft size={18}/></button>
               <strong>{new Intl.DateTimeFormat("en-IN",{month:"long",year:"numeric"}).format(month)}</strong>
