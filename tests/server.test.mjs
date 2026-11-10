@@ -247,7 +247,7 @@ before(async () => {
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
@@ -336,6 +336,61 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
     jar: adminJar, csrf: adminCsrf, method: "POST", body: { id: pastHoliday.id },
   });
   assert.equal(pastHolidayRemoval.status, 409);
+  // Verified AP gazette holidays and optional festivals are different calendar types.
+  const calendar = await request("/api/company-calendar", { jar: adminJar });
+  assert.equal(calendar.status, 200);
+  assert.match(calendar.payload.today, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(calendar.payload.timezone, "Asia/Kolkata");
+  assert.ok(calendar.payload.holidays.some((row) =>
+    row.holidayDate === "2026-01-14" && row.kind === "government" && /Bhogi/i.test(row.name)));
+  assert.ok(calendar.payload.holidays.some((row) =>
+    row.holidayDate === "2026-03-19" && /Ugadi/i.test(row.name)));
+  assert.ok(calendar.payload.observances.some((row) =>
+    row.date === "2026-07-16" && /Ratha Yatra/.test(row.name)));
+  assert.equal(calendar.payload.holidays.some((row) =>
+    row.holidayDate === "2026-07-16"), false, "Optional observances must not block attendance.");
+
+  const deniedClosure = await request("/api/company-holidays/declare", {
+    jar: employeeJar, csrf: employeeCsrf, method: "POST",
+    body: { startDate: "2027-04-07", endDate: "2027-04-08", name: "Unauthorized closure" },
+  });
+  assert.ok([401, 403].includes(deniedClosure.status));
+  const declared = await request("/api/company-holidays/declare", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { startDate: "2027-04-07", endDate: "2027-04-08",
+      name: "CEO special closure", note: "Development-only approved team break" },
+  });
+  assert.equal(declared.status, 201, JSON.stringify(declared.payload));
+  assert.equal(declared.payload.count, 2);
+  const duplicateDeclaration = await request("/api/company-holidays/declare", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { startDate: "2027-04-08", endDate: "2027-04-09", name: "Overlap" },
+  });
+  assert.equal(duplicateDeclaration.status, 409);
+  const afterDeclaration = await request("/api/company-calendar", { jar: adminJar });
+  assert.ok(afterDeclaration.payload.holidays.some((row) =>
+    row.holidayDate === "2027-04-07" && row.kind === "ceo"));
+  const corrected = await request("/api/company-holidays/reschedule", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { id: declared.payload.dates[0].id, date: "2027-04-09" },
+  });
+  assert.equal(corrected.status, 200);
+  const movedClosure = adminDb.prepare("SELECT holiday_date FROM company_holidays WHERE id=?")
+    .get(declared.payload.dates[0].id);
+  assert.equal(movedClosure.holiday_date, "2027-04-09");
+  const official = afterDeclaration.payload.holidays.find((row) =>
+    row.holidayDate === "2026-12-25" && row.kind === "government");
+  assert.ok(official);
+  const cannotDeleteOfficial = await request("/api/company-holidays/remove", {
+    jar: adminJar, csrf: adminCsrf, method: "POST", body: { id: official.id },
+  });
+  assert.equal(cannotDeleteOfficial.status, 403);
+  const requiresNewSource = await request("/api/company-holidays/reschedule", {
+    jar: adminJar, csrf: adminCsrf, method: "POST",
+    body: { id: official.id, date: "2026-12-26" },
+  });
+  assert.equal(requiresNewSource.status, 400);
+
 
   const publicSession = await request("/api/auth/me", { jar: employeeJar });
   employeeCsrf = publicSession.payload.csrfToken;
