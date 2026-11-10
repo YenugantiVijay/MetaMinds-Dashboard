@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Clock3, ShieldCheck, Send, Umbrella, UserRound } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Clock3, ShieldCheck, Send, Umbrella } from "lucide-react";
 import type { Leave, NotifyFn, User } from "../../types";
 import { api, formatDate } from "../../services/api";
 import { Button } from "../../components/ui/Button";
