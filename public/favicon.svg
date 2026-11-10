@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MetaMinds">
+<defs><linearGradient id="ring" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#0b3575"/><stop offset=".48" stop-color="#2883c3"/><stop offset="1" stop-color="#67b3e1"/></linearGradient></defs>
+<rect x="1" y="1" width="62" height="62" rx="16" fill="#fff"/>
+<path d="M12 18c8-10 23-14 36-5 6 4 10 10 12 18M52 46c-8 12-27 17-41 5C6 47 4 40 4 34" fill="none" stroke="url(#ring)" stroke-width="5.5" stroke-linecap="round"/>
+<path d="M18 45c5-19 10-28 15-10 3 12 7 12 10-3l4 13M26 29c2-8 4-8 8 2" fill="none" stroke="url(#ring)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
