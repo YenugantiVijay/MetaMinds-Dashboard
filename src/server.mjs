@@ -1850,7 +1850,10 @@ async function route(req, res, context, body, url) {
     }
     const decision = leaveAction[2] === "approve" ? "approved" : "rejected";
     const reason = decision === "rejected" ? requiredString(body.reason, "Rejection reason", 500, 3) : null;
-    let finalPayTreatment = leaveType.paid ? (request.pay_treatment || "full_paid") : "unpaid";
+    // Personal leave approval is not a payroll decision. Keep pay treatment unset.
+    let finalPayTreatment = request.policy_mode === "personal"
+      ? null
+      : leaveType.paid ? (request.pay_treatment || "full_paid") : "unpaid";
     if (decision === "approved" && leaveType.paid) {
       const configured = process.env.ANNUAL_PAID_LEAVE_DAYS || getSetting("annual_paid_leave_days");
       if (!/^\d{1,3}$/.test(configured) || Number(configured) > 365) {
