@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type FormEvent } from "react";
+import { useState, useEffect, useMemo, useRef, type FormEvent, type ReactNode } from "react";
 import {
   BriefcaseBusiness,
   Check,
@@ -11,9 +11,197 @@ import {
   Eye,
   EyeOff,
   ArrowUpRight,
+  FileText,
+  GraduationCap,
+  CreditCard,
+  IdCard,
 } from "lucide-react";
 import { api } from "../../services/api";
 import { BrandMark, Button } from "../../components/ui";
+import type { ApplicationDocumentType } from "../../types";
+
+type UploadedDoc = { dataUrl: string; fileName: string };
+
+const ALLOWED_DOC_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"]);
+const MAX_DOC_BYTES = 2 * 1024 * 1024;
+
+const DOCUMENT_SPECS: Array<{
+  key: ApplicationDocumentType;
+  group: "education" | "identity";
+  label: string;
+  helper: string;
+  icon: ReactNode;
+}> = [
+  {
+    key: "education10thDoc",
+    group: "education",
+    label: "10th / SSC Certificate",
+    helper: "Upload your 10th class marks memo or pass certificate.",
+    icon: <GraduationCap size={16} />,
+  },
+  {
+    key: "educationInterDoc",
+    group: "education",
+    label: "Intermediate / 12th Certificate",
+    helper: "Upload your Intermediate / +2 marks memo or pass certificate.",
+    icon: <GraduationCap size={16} />,
+  },
+  {
+    key: "educationHigherDoc",
+    group: "education",
+    label: "UG / Higher Education Certificate",
+    helper: "Upload your degree / graduation certificate or consolidated marks memo.",
+    icon: <GraduationCap size={16} />,
+  },
+  {
+    key: "panFront",
+    group: "identity",
+    label: "PAN Card (Front)",
+    helper: "Upload the front side of your PAN card.",
+    icon: <CreditCard size={16} />,
+  },
+  {
+    key: "panBack",
+    group: "identity",
+    label: "PAN Card (Back)",
+    helper: "Upload the back side of your PAN card.",
+    icon: <CreditCard size={16} />,
+  },
+  {
+    key: "aadharFront",
+    group: "identity",
+    label: "Aadhaar Card (Front)",
+    helper: "Upload the front side of your Aadhaar card.",
+    icon: <IdCard size={16} />,
+  },
+  {
+    key: "aadharBack",
+    group: "identity",
+    label: "Aadhaar Card (Back)",
+    helper: "Upload the back side of your Aadhaar card.",
+    icon: <IdCard size={16} />,
+  },
+];
+
+function DocumentUploadBox({
+  id,
+  label,
+  helper,
+  value,
+  icon,
+  onChange,
+  onError,
+}: {
+  id: string;
+  label: string;
+  helper: string;
+  value: UploadedDoc | null;
+  icon: ReactNode;
+  onChange: (doc: UploadedDoc | null) => void;
+  onError: (message: string) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  function handleFile(file?: File) {
+    if (!file) return;
+    if (!ALLOWED_DOC_TYPES.has(file.type)) {
+      onError(`${label}: please choose a JPG, PNG, WebP, or PDF file.`);
+      return;
+    }
+    if (file.size > MAX_DOC_BYTES) {
+      onError(`${label}: file size must be less than 2 MB.`);
+      return;
+    }
+    onError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        onChange({ dataUrl: reader.result, fileName: file.name });
+      }
+    };
+    reader.onerror = () => onError(`${label}: unable to read the selected file.`);
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div
+      className={`doc-box ${value ? "doc-box-active" : ""} ${dragOver ? "doc-box-dragover" : ""}`}
+      onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragOver(false);
+        handleFile(event.dataTransfer.files?.[0]);
+      }}
+    >
+      <div className="doc-box-header">
+        <span className="doc-box-title-wrap">
+          <span className="doc-icon-chip" aria-hidden="true">{icon}</span>
+          <span className="doc-title">{label} <b className="required-star">*</b></span>
+        </span>
+        {value ? (
+          <span className="doc-status-ready"><Check size={13} aria-hidden="true" /> Attached</span>
+        ) : (
+          <span className="doc-status-pending">Required</span>
+        )}
+      </div>
+      <p className="doc-box-helper">{helper}</p>
+
+      {value ? (
+        <div className="doc-preview-card">
+          {value.dataUrl.startsWith("data:image/") ? (
+            <img src={value.dataUrl} alt={label} className="doc-preview-thumb" />
+          ) : (
+            <div className="doc-pdf-fallback"><FileText size={24} aria-hidden="true" /><span>PDF</span></div>
+          )}
+          <div className="doc-preview-meta">
+            <span className="doc-preview-success">{value.fileName}</span>
+            <div className="doc-preview-buttons">
+              <button type="button" className="text-button" onClick={() => fileInputRef.current?.click()}>
+                Replace
+              </button>
+              <button type="button" className="text-button text-danger" onClick={() => onChange(null)}>
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="doc-dropzone"
+          role="button"
+          tabIndex={0}
+          aria-label={`Upload ${label}`}
+          onClick={() => fileInputRef.current?.click()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
+        >
+          <Upload size={16} aria-hidden="true" />
+          <span>Click or drag JPG, PNG, WebP, or PDF (max 2 MB)</span>
+        </div>
+      )}
+
+      <input
+        id={id}
+        ref={fileInputRef}
+        type="file"
+        aria-label={label}
+        accept="image/png, image/jpeg, image/jpg, image/webp, application/pdf"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          handleFile(file);
+        }}
+      />
+    </div>
+  );
+}
 
 export interface RegisterProps {
   onBack: () => void;
@@ -44,6 +232,15 @@ export function Register({ onBack, onSubmitted }: RegisterProps) {
     password: "",
     confirmPassword: "",
     privacyAcknowledged: false,
+  });
+  const [documents, setDocuments] = useState<Record<ApplicationDocumentType, UploadedDoc | null>>({
+    education10thDoc: null,
+    educationInterDoc: null,
+    educationHigherDoc: null,
+    panFront: null,
+    panBack: null,
+    aadharFront: null,
+    aadharBack: null,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -180,7 +377,11 @@ export function Register({ onBack, onSubmitted }: RegisterProps) {
         setStep(4);
         return;
       }
-      // Step 4: Submit without collecting identity documents.
+      // Step 4: Validate required encrypted onboarding documents and privacy acknowledgement.
+      const missingDocs = DOCUMENT_SPECS.filter((spec) => !documents[spec.key]).map((spec) => spec.label);
+      if (missingDocs.length > 0) {
+        throw new Error(`Please upload all required documents: ${missingDocs.join(", ")}.`);
+      }
       if (!form.privacyAcknowledged) {
         throw new Error("Please acknowledge the application privacy notice before submitting.");
       }
@@ -199,6 +400,7 @@ export function Register({ onBack, onSubmitted }: RegisterProps) {
           privacyAcknowledged: form.privacyAcknowledged,
           password: form.password,
           photoUrl: form.photoUrl || undefined,
+          ...documents,
         }),
       });
       onSubmitted({
@@ -535,17 +737,54 @@ export function Register({ onBack, onSubmitted }: RegisterProps) {
 
           {step === 4 && (
             <>
-              <div className="full-width notice notice-info">
-                <ShieldCheck size={19} />
-                <span>For privacy and data minimization, identity documents (including PAN and Aadhaar) are not collected in this public application. If documents are required later, the company must request them through an approved secure process with access and retention controls.</span>
+              <div className="full-width kyc-notice-box">
+                <ShieldCheck size={20} aria-hidden="true" />
+                <div>
+                  <strong>Encrypted Onboarding Document Verification ({Object.values(documents).filter(Boolean).length} / 7 Attached)</strong>
+                  <p>Upload your 10th, Intermediate, UG certificates, PAN Card (front &amp; back), and Aadhaar Card (front &amp; back). Files are encrypted with AES-256-GCM at rest and accessible only to the CEO during review.</p>
+                </div>
               </div>
               <label className="full-width">
                 <span>Highest Educational Qualification Summary</span>
                 <textarea rows={3} maxLength={1000} value={form.education} onChange={(event) => update("education", event.target.value)} placeholder="e.g. B.Tech in Computer Science, institution and graduation year" />
               </label>
+              <div className="full-width">
+                <h3 className="doc-section-heading">Educational Certificates</h3>
+                <div className="doc-grid">
+                  {DOCUMENT_SPECS.filter((spec) => spec.group === "education").map((spec) => (
+                    <DocumentUploadBox
+                      key={spec.key}
+                      id={`doc-${spec.key}`}
+                      label={spec.label}
+                      helper={spec.helper}
+                      icon={spec.icon}
+                      value={documents[spec.key]}
+                      onChange={(doc) => setDocuments((current) => ({ ...current, [spec.key]: doc }))}
+                      onError={setError}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="full-width">
+                <h3 className="doc-section-heading">PAN &amp; Aadhaar Verification (Front &amp; Back)</h3>
+                <div className="doc-grid">
+                  {DOCUMENT_SPECS.filter((spec) => spec.group === "identity").map((spec) => (
+                    <DocumentUploadBox
+                      key={spec.key}
+                      id={`doc-${spec.key}`}
+                      label={spec.label}
+                      helper={spec.helper}
+                      icon={spec.icon}
+                      value={documents[spec.key]}
+                      onChange={(doc) => setDocuments((current) => ({ ...current, [spec.key]: doc }))}
+                      onError={setError}
+                    />
+                  ))}
+                </div>
+              </div>
               <label className="consent-row full-width">
                 <input required type="checkbox" checked={form.privacyAcknowledged} onChange={(event) => update("privacyAcknowledged", event.target.checked)} />
-                <span>I confirm that the information in this application is accurate and acknowledge that it will be used to review my application and contact me about its outcome. <b>*</b></span>
+                <span>I confirm that the information and documents in this application are accurate and consent to encrypted verification by the CEO for onboarding review. <b>*</b></span>
               </label>
             </>
           )}

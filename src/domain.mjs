@@ -224,3 +224,48 @@ export function verifyPassword(password, encoded) {
   const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
   return timingSafeEqual(actual, expected);
 }
+
+export function validateUploadedDataUrl(
+  value,
+  { allowPdf = false, maxBytes = 2 * 1024 * 1024, fieldLabel = "File" } = {},
+) {
+  const allowedLabel = allowPdf ? "JPG, PNG, WebP, or PDF" : "PNG, JPG, or WebP";
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${fieldLabel} is required.`);
+  }
+  const trimmed = value.trim();
+  const pattern = allowPdf
+    ? /^data:(image\/(?:png|jpeg|jpg|webp)|application\/pdf);base64,([A-Za-z0-9+/]+={0,2})$/
+    : /^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+  const match = pattern.exec(trimmed);
+  if (!match) {
+    throw new Error(`${fieldLabel} must be a valid ${allowedLabel} file (max ${Math.round(maxBytes / (1024 * 1024))} MB).`);
+  }
+  const mimeType = match[1] === "image/jpg" ? "image/jpeg" : match[1];
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length === 0 || buffer.length > maxBytes) {
+    throw new Error(`${fieldLabel} must be less than ${Math.round(maxBytes / (1024 * 1024))}MB.`);
+  }
+  const isPng = mimeType === "image/png" &&
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+    buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a;
+  const isJpeg = mimeType === "image/jpeg" &&
+    buffer.length >= 3 &&
+    buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const isWebp = mimeType === "image/webp" &&
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP";
+  const isPdf = allowPdf && mimeType === "application/pdf" &&
+    buffer.length >= 5 &&
+    buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+  if (!isPng && !isJpeg && !isWebp && !isPdf) {
+    throw new Error(`${fieldLabel} must be a valid ${allowedLabel} file (max ${Math.round(maxBytes / (1024 * 1024))} MB).`);
+  }
+  return {
+    mimeType,
+    sizeBytes: buffer.length,
+    dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+  };
+}

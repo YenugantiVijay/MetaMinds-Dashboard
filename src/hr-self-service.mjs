@@ -1,10 +1,29 @@
+import { validateUploadedDataUrl } from "./domain.mjs";
+
+const MAX_PROFILE_PHOTO_BYTES = 2 * 1024 * 1024;
+
+function validateProfilePhoto(value, fail) {
+  if (value === null || value === "") return null;
+  if (typeof value !== "string") fail(400, "Please upload a valid PNG, JPG, or WebP image (max 2 MB).");
+  if (!value.trim()) return null;
+  try {
+    return validateUploadedDataUrl(value, {
+      allowPdf: false,
+      maxBytes: MAX_PROFILE_PHOTO_BYTES,
+      fieldLabel: "Profile image",
+    }).dataUrl;
+  } catch (error) {
+    fail(400, error instanceof Error ? error.message : "Please upload a valid PNG, JPG, or WebP image (max 2 MB).");
+  }
+}
+
 // Employee self-service endpoints. Existing payroll policy is intentionally unchanged.
 export function employeeSelfService({
   method, path, body, context, db, requireUser, getEmployeeForUser, fail,
   validDate, countWorkingDays, withTransaction, audit, notifyUser, queueEmail,
   currentDateInZone, timestamp, searchParams,
 }) {
-  if (!["/api/me/profile", "/api/personal-leave", "/api/personal-leave/quota"].includes(path)) return undefined;
+  if (!["/api/me/profile", "/api/me/profile/photo", "/api/personal-leave", "/api/personal-leave/quota"].includes(path)) return undefined;
   const user = requireUser(context);
   const employee = getEmployeeForUser(user);
   if (method === "GET" && path === "/api/me/profile") {
@@ -12,10 +31,24 @@ export function employeeSelfService({
     return { status: 200, body: {
       employeeId: employee.employee_id, fullName: employee.full_name,
       email: user.email, position: employee.position,
+      photoUrl: employee.photo_url ?? null,
       phone: row?.phone ?? "", address: row?.address ?? "",
       emergencyName: row?.emergencyName ?? "", emergencyRelationship: row?.emergencyRelationship ?? "",
       emergencyPhone: row?.emergencyPhone ?? "", updatedAt: row?.updatedAt ?? null,
     } };
+  }
+  if (method === "POST" && path === "/api/me/profile/photo") {
+    const photoUrl = validateProfilePhoto(body.photoUrl ?? null, fail);
+    withTransaction(() => {
+      db.prepare("UPDATE employees SET photo_url = ? WHERE id = ?").run(photoUrl, employee.id);
+      audit(
+        user.user_id,
+        photoUrl ? "employee.profile_photo_updated" : "employee.profile_photo_removed",
+        "employee",
+        employee.id,
+      );
+    });
+    return { status: 200, body: { ok: true, photoUrl } };
   }
   if (method === "POST" && path === "/api/me/profile") {
     const clean = (key, max) => {

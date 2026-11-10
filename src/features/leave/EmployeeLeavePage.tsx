@@ -41,8 +41,8 @@ function holidaySymbol(name: string) {
 function toDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
 }
-export function EmployeeLeavePage({ user, notify, onNavigate }: {
-  user: User; notify: NotifyFn; onNavigate: (section: "profile") => void;
+export function EmployeeLeavePage({ user, notify }: {
+  user: User; notify: NotifyFn;
 }) {
   const [rows, setRows] = useState<Leave[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -168,10 +168,6 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
         <div><p className="hub-eyebrow">TIME OFF</p><h1>Leave &amp; Calendar</h1>
           <p>Explore company holidays, request leave, and follow your approval status, {user.name}.</p></div>
       </header>
-      <nav className="hub-tabbar" aria-label="Employee self-service">
-        <button className="hub-tab" type="button" onClick={()=>onNavigate("profile")}>My Profile</button>
-        <span className="hub-tab active" aria-current="page"><CalendarDays size={17}/> Leave &amp; Calendar</span>
-      </nav>
       <div className="hub-calendar-layout">
         <section className="hub-card hub-calendar-card">
           <div className="hub-calendar-header">
