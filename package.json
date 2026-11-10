@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "node dev.mjs",
     "reset:employees": "node --env-file-if-exists=.env scripts/reset-all-local-employees.mjs",
+    "verify:reset": "node --env-file-if-exists=.env scripts/verify-cleanup.mjs",
     "dev:fresh": "node --env-file-if-exists=.env scripts/reset-all-local-employees.mjs --start",
     "dev:server": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.mjs",
     "dev:client": "node node_modules/vite/bin/vite.js",
