@@ -84,6 +84,30 @@ For Gmail, use `smtp.gmail.com`, port `465`, `SMTP_SECURE=true`, and your Gmail 
 
 Application email OTPs are six characters, contain letters and digits, expire after 10 minutes, and are limited to five verification attempts. Sending a real verification email requires SMTP credentials; when SMTP is unavailable, the form reports the configuration error instead of bypassing verification or claiming a code was sent. The application password is activated only after CEO approval. The “Email JS” request is implemented as server-rendered JavaScript Nodemailer templates over SMTP, rather than a browser-side EmailJS integration, so SMTP credentials are not exposed to applicants.
 
+## Fresh-start employee data reset (local development only)
+
+To start testing with an **empty employee directory** while keeping the current CEO demo login, first update your local checkout to the latest `main` and **close any currently running MetaMinds server**.
+
+From the MetaMinds project directory on your Windows PC, run:
+
+```powershell
+npm run dev:fresh
+```
+
+This is a deliberate, one-time action **only when you run this special command**; ordinary `npm run dev` never resets data.
+
+- Runs against the default private local database at `%USERPROFILE%\\.meta-minds-portal\\portal.sqlite` only; refuses production/remote configurations and a running local API server.
+- Verifies and preserves the single CEO demo user, its password hash, role and active state. No new employee/demo accounts are seeded.
+- Performs a verified SQLite backup (including the `.application-key`) under `%USERPROFILE%\\.meta-minds-portal\\backups\\` before deletion.
+- Clears non-CEO users, employee profiles, attendance and breaks, leave requests, pending applicant/OTP records, private-document **database references**, work reports, payroll draft records, email outbox entries, notifications and synthetic local audit/feed history. Removes demo-only team metadata. Clears employee ID counters for a fresh development cycle.
+- Preserves the company's holidays, working-time policies, approved leave types, departments and regular teams. The CEO is signed out and must sign in again.
+- Validates remaining counts, database foreign keys and CEO identity before committing the deletion.
+- Starts the development server after the successful reset.
+
+To reset without starting the server, run `npm run reset:employees`. To verify again without modifying data, run `npm run verify:reset`.
+
+**This cannot be performed through GitHub alone:** employee data lives on the Windows PC, not inside the repository. **Do not run against real employee records.** The backup still holds the old data and should be protected or handled under an approved retention/deletion policy. Physical file attachments outside SQLite, external service data, and previously exported copies are not automatically removed.
+
 ## Database, migrations, and tests
 
 Schema migrations live in [migrations/](./migrations/). SQLite initialization applies unapplied, numbered SQL files automatically and stores applied versions in `schema_migrations`. The key entities and relationships are summarized in [docs/database.md](./docs/database.md).

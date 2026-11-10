@@ -38,7 +38,7 @@ GitHub cannot access a developer's local `%USERPROFILE%\\.meta-minds-portal\\por
 powershell -ExecutionPolicy Bypass -File .\\scripts\\reset-local-test-employees.ps1
 ```
 
-The script previews counts, requires typing `RESET TEST EMPLOYEES`, uses `NODE_ENV=development`, verifies a SQLite backup and encryption key, preserves the CEO demo and company config, then removes non-CEO test accounts. **It has NOT been executed through this GitHub PR.** It retains application submissions and immutable audit events that cannot safely be proven disposable. Use only on a dedicated test database with no real staff information.
+The Windows helper now invokes the explicitly requested **full fresh-start reset** (equivalent to `npm run reset:employees`) against the default local development database. It verifies a SQLite + encryption-key backup, retains the CEO demo account and company config, and clears non-CEO test accounts, candidate applications, attendance, leaves and old in-app notifications/feed, including synthetic development audit events. **It has NOT been executed against your Windows database through GitHub.** Use only with disposable test records. The backup still contains the previous data.
 
 ## Validation
 Run `npm run check`, `npm run build`, `npm test` on Node 26. Regression coverage includes official holiday provenance, optional dates, CEO authorization, closure overlap, future corrections, and browser today-navigation behavior. No new payroll actions are added.

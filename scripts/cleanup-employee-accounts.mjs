@@ -19,7 +19,8 @@ const forbidden = /(production|live|prod-db)/i.test(dataDir);
 if (process.env.NODE_ENV !== "development" || !dedicatedDataDir || forbidden) {
   throw new Error("Employee cleanup requires NODE_ENV=development and an explicit dedicated local DATA_DIR.");
 }
-const ceo = db.prepare("SELECT id,email,role,password_hash FROM users WHERE email=? COLLATE NOCASE")
+const fullFreshStart = process.argv.includes("--full-fresh");
+const ceo = db.prepare("SELECT id,email,role,password_hash,active FROM users WHERE email=? COLLATE NOCASE")
   .get(DEMO_CREDENTIALS.ceo.email);
 if (!ceo || ceo.role !== "ceo" || !Number.isSafeInteger(ceo.id)) {
   throw new Error("Unique CEO demo account could not be verified; cleanup refused.");
@@ -35,8 +36,15 @@ const preview = {
   attendanceRecords: count(`SELECT COUNT(*) n FROM attendance_records WHERE employee_id IN (${doomedEmployee})`),
   leaveRequests: count(`SELECT COUNT(*) n FROM leave_requests WHERE employee_id IN (${doomedEmployee})`),
   dailyReports: count(`SELECT COUNT(*) n FROM daily_work_reports WHERE employee_id IN (${doomedEmployee})`),
+  candidateApplications: count("SELECT COUNT(*) AS n FROM employee_applications"),
+  applicationVerifications: count("SELECT COUNT(*) AS n FROM application_verifications"),
+  applicationDocuments: count("SELECT COUNT(*) AS n FROM application_documents"),
+  pendingEmailRecords: count("SELECT COUNT(*) AS n FROM email_outbox"),
+  notifications: count("SELECT COUNT(*) AS n FROM notifications"),
+  auditEvents: count("SELECT COUNT(*) AS n FROM audit_logs"),
 };
-console.log("LOCAL DEVELOPMENT RESET PREVIEW (no data changed):", preview);
+console.log(`LOCAL DEVELOPMENT ${fullFreshStart ? "COMPLETE FRESH-START" : "EMPLOYEE"} RESET PREVIEW (no data changed):`, preview);
+if (fullFreshStart) console.log("FULL FRESH START: all applications, work records, notifications, outbox records and local test audit events will also be cleared. The CEO account, company settings and verified holidays remain.");
 console.log("Preserved CEO demo account ID:", ceo.id);
 if (!process.argv.includes("--execute")) {
   console.log("Preview only. To run, supply both --execute and --confirm-disposable-data after reviewing the above counts.");
@@ -69,6 +77,9 @@ try {
   db.prepare(`UPDATE audit_logs SET actor_user_id=NULL WHERE actor_user_id IN (${doomedUsers})`).run();
   db.prepare(`UPDATE employee_applications SET reviewed_by=NULL WHERE reviewed_by IN (${doomedUsers})`).run();
   db.prepare(`UPDATE payroll_runs SET finalized_by=NULL WHERE finalized_by IN (${doomedUsers})`).run();
+  // The holiday record belongs to the company, not to an employee who created it.
+  // Keep the holiday even if a previously authorized creator is deleted.
+  db.prepare(`UPDATE company_holidays SET created_by=NULL WHERE created_by IN (${doomedUsers})`).run();
 
   const attendance = `SELECT id FROM attendance_records WHERE employee_id IN (${doomedEmployee})`;
   const leaves = `SELECT id FROM leave_requests WHERE employee_id IN (${doomedEmployee})`;
@@ -106,15 +117,57 @@ try {
   del("employees",`id IN (${doomedEmployee})`);
   del("users",`id IN (${doomedUsers})`);
 
+  if (fullFreshStart) {
+    // This mode is strictly for an explicitly disposable LOCAL development database.
+    // Application and verification queues are not employee profiles, so the standard
+    // scoped cleanup deliberately retains them. A full fresh start clears them too.
+    del("application_documents","1=1");
+    del("employee_applications","1=1");
+    del("application_verifications","1=1");
+    del("email_outbox","1=1");
+    del("notifications","1=1"); // Remove the prior CEO/employee recent activity feed.
+    del("audit_logs","1=1"); // Only disposable dev history; backup retains a copy.
+    del("sessions","1=1"); // Force re-login with the preserved CEO credentials.
+    del("activation_tokens","1=1");
+    del("password_reset_tokens","1=1");
+    del("payroll_runs","1=1");
+    del("employee_id_sequences","1=1");
+    del("employee_id_year_sequences","1=1");
+    // Remove old generated demo organizational data, not actual configured teams.
+    db.prepare("DELETE FROM teams WHERE name='Demo Engineering Team' AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_members.team_id=teams.id)").run();
+    db.prepare("DELETE FROM departments WHERE name='Demo Engineering' AND NOT EXISTS (SELECT 1 FROM teams WHERE teams.department_id=departments.id)").run();
+  }
+
   const remaining = db.prepare("SELECT COUNT(*) AS n FROM employees").get().n;
   const remainingUsers = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
   const actualCeo = db.prepare("SELECT password_hash,role FROM users WHERE id=?").get(ceo.id);
   if (remaining !== 0 || remainingUsers !== 1 || actualCeo?.role !== "ceo" ||
     actualCeo.password_hash !== ceo.password_hash) throw new Error("CEO preservation or cleanup verification failed.");
+  if (fullFreshStart) {
+    const emptyTables = [
+      "employee_applications", "application_documents", "application_verifications",
+      "employees", "attendance_records", "attendance_exceptions",
+      "attendance_breaks", "attendance_automation", "daily_work_reports",
+      "leave_requests", "leave_approvals", "leave_balances",
+      "email_outbox", "notifications", "audit_logs",
+      "payroll_runs", "payroll_items", "payslips",
+      "sessions", "activation_tokens", "password_reset_tokens",
+    ];
+    for (const table of emptyTables) {
+      if (db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n !== 0)
+        throw new Error(`Fresh-start verification failed: ${table} still has records.`);
+    }
+    const savedCeo = db.prepare("SELECT * FROM users WHERE id=?").get(ceo.id);
+    if (savedCeo.active !== ceo.active || savedCeo.email !== ceo.email)
+      throw new Error("CEO account properties changed unexpectedly.");
+  }
   const foreignKeys = db.prepare("PRAGMA foreign_key_check").all();
   if (foreignKeys.length) throw new Error(`Foreign key violations: ${foreignKeys.length}`);
   db.exec("COMMIT");
-  console.log("Local disposable employee reset completed. Company configuration and CEO credentials preserved.");
+  console.log(fullFreshStart
+    ? "Local FULL FRESH START completed. Employee, application, attendance and recent feed data cleared. CEO credentials, company settings and holidays preserved."
+    : "Local disposable employee reset completed. Company configuration and CEO credentials preserved.");
+  console.log("The verified backup still contains old records and must be secured under your local data directory.");
 } catch (error) {
   db.exec("ROLLBACK");
   throw error;
