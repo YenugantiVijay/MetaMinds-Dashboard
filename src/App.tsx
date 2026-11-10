@@ -26,8 +26,10 @@ import {
 import { Overview } from "./features/dashboard";
 import { ApplicationsPage } from "./features/applications";
 import { DirectoryPage } from "./features/employees";
+import { EmployeeProfilePage } from "./features/employees/EmployeeProfilePage";
 import { AttendancePage } from "./features/attendance";
 import { LeavePage } from "./features/leave";
+import { EmployeeLeavePage } from "./features/leave/EmployeeLeavePage";
 import { PayrollPage } from "./features/payroll";
 import { SettingsPage } from "./features/settings";
 import { AuditPage } from "./features/audit";
@@ -184,7 +186,7 @@ export function App() {
         onNavigate={setSection}
         onLogout={() => void logout()}
         onHelp={() => setHelpOpen(true)}
-        onAccount={() => setAccountOpen(true)}
+        onAccount={() => user.role === "ceo" ? setAccountOpen(true) : setSection("profile")}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
       />
@@ -195,7 +197,7 @@ export function App() {
           onMenu={() => setMenuOpen(true)}
           onNotifications={() => setNotificationsOpen(true)}
           onNavigate={setSection}
-          onAccount={() => setAccountOpen(true)}
+          onAccount={() => user.role === "ceo" ? setAccountOpen(true) : setSection("profile")}
           onLogout={() => void logout()}
         />
         {section === "overview" && <Overview user={user} notify={notify} onNavigate={setSection} />}
@@ -203,8 +205,9 @@ export function App() {
           <ApplicationsPage notify={notify} />
         )}
         {section === "employees" && <DirectoryPage user={user} notify={notify} />}
+        {section === "profile" && user.role !== "ceo" && <EmployeeProfilePage user={user} notify={notify} onNavigate={setSection} />}
         {section === "attendance" && <AttendancePage user={user} notify={notify} />}
-        {section === "leave" && <LeavePage user={user} notify={notify} />}
+        {section === "leave" && (user.role === "employee" ? <EmployeeLeavePage user={user} notify={notify} onNavigate={setSection} /> : <LeavePage user={user} notify={notify} />)}
         {section === "payroll" && user.role === "ceo" && <PayrollPage />}
         {section === "settings" && user.role === "ceo" && <SettingsPage notify={notify} />}
         {section === "audit" && user.role === "ceo" && <AuditPage notify={notify} />}
