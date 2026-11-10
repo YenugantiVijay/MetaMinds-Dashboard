@@ -1767,7 +1767,7 @@ async function route(req, res, context, body, url) {
   const selfServiceResponse = employeeSelfService({
     method, path, body, context, db, requireUser, getEmployeeForUser, fail,
     validDate, countWorkingDays, withTransaction, audit, notifyUser, queueEmail,
-    currentDateInZone, timestamp,
+    currentDateInZone, timestamp, searchParams: url.searchParams,
   });
   if (selfServiceResponse) return selfServiceResponse;
 
