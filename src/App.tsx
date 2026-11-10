@@ -72,6 +72,10 @@ export function App() {
     window.setTimeout(() => setToast(null), 4200);
   }, []);
 
+  const updatePhotoUrl = useCallback((photoUrl: string | null) => {
+    setUser((current) => (current ? { ...current, photoUrl } : current));
+  }, []);
+
   useEffect(() => {
     api<{ user: User | null; csrfToken: string }>("/api/auth/me")
       .then((result) => {
@@ -205,9 +209,9 @@ export function App() {
           <ApplicationsPage notify={notify} />
         )}
         {section === "employees" && <DirectoryPage user={user} notify={notify} />}
-        {section === "profile" && user.role !== "ceo" && <EmployeeProfilePage user={user} notify={notify} onNavigate={setSection} />}
+        {section === "profile" && user.role !== "ceo" && <EmployeeProfilePage user={user} notify={notify} onPhotoChange={updatePhotoUrl} />}
         {section === "attendance" && <AttendancePage user={user} notify={notify} />}
-        {section === "leave" && (user.role === "employee" ? <EmployeeLeavePage user={user} notify={notify} onNavigate={setSection} /> : <ManageLeavePage user={user} notify={notify} />)}
+        {section === "leave" && (user.role === "employee" ? <EmployeeLeavePage user={user} notify={notify} /> : <ManageLeavePage user={user} notify={notify} />)}
         {section === "payroll" && user.role === "ceo" && <PayrollPage />}
         {section === "settings" && user.role === "ceo" && <SettingsPage notify={notify} />}
         {section === "audit" && user.role === "ceo" && <AuditPage notify={notify} />}

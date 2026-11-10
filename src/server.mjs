@@ -16,6 +16,7 @@ import {
   isSecondSaturday,
   localDateTimeToUtc,
   makeCompanyEmployeeId,
+  validateUploadedDataUrl,
   verifyPassword,
   workedMinutes,
 } from "./domain.mjs";
@@ -29,6 +30,17 @@ const appUrl = new URL(process.env.APP_URL || "http://localhost:5173");
 const isProduction = process.env.NODE_ENV === "production";
 if (isProduction && appUrl.protocol !== "https:") throw new Error("Production APP_URL must use HTTPS.");
 const maxBodyBytes = 5 * 1024 * 1024;
+const maxApplicationBodyBytes = 25 * 1024 * 1024;
+const MAX_APPLICATION_DOCUMENT_BYTES = 2 * 1024 * 1024;
+const REQUIRED_APPLICATION_DOCUMENTS = [
+  { key: "education10thDoc", label: "10th / SSC Certificate", defaultFileName: "10th-certificate" },
+  { key: "educationInterDoc", label: "Intermediate / 12th Certificate", defaultFileName: "inter-certificate" },
+  { key: "educationHigherDoc", label: "UG / Higher Education Certificate", defaultFileName: "ug-certificate" },
+  { key: "panFront", label: "PAN Card (Front)", defaultFileName: "pan-front" },
+  { key: "panBack", label: "PAN Card (Back)", defaultFileName: "pan-back" },
+  { key: "aadharFront", label: "Aadhaar Card (Front)", defaultFileName: "aadhaar-front" },
+  { key: "aadharBack", label: "Aadhaar Card (Back)", defaultFileName: "aadhaar-back" },
+];
 const sessions = db.prepare(`
   SELECT s.token_hash, s.csrf_hash, s.expires_at, u.id AS user_id, u.email, u.role, u.active,
          e.id AS employee_row_id, e.employee_id, e.full_name, e.employment_type, e.position,
@@ -242,12 +254,12 @@ function rateLimit(req, key, limit, windowMs) {
   if (entry.count > limit) fail(429, "Too many attempts. Please wait before trying again.");
 }
 
-async function readBody(req) {
+async function readBody(req, limitBytes = maxBodyBytes) {
   const chunks = [];
   let length = 0;
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > maxBodyBytes) fail(413, "Request body is too large.");
+    if (length > limitBytes) fail(413, "Request body is too large.");
     chunks.push(chunk);
   }
   if (!length) return {};
@@ -923,10 +935,52 @@ function createApplication(body, context) {
   const passwordHash = hashPassword(rawPassword);
   if (body.privacyAcknowledged !== true) fail(400, "Please acknowledge the privacy notice to submit.");
 
-  const photoUrl = typeof body.photoUrl === "string" && body.photoUrl.trim() ? body.photoUrl.trim() : null;
-  const documentFields = ["education10thDoc", "educationInterDoc", "educationHigherDoc", "panFront", "panBack", "aadharFront", "aadharBack"];
-  if (documentFields.some((field) => body[field] !== undefined && body[field] !== null && body[field] !== "")) {
-    fail(400, "Identity and education documents are not accepted through the public application. Use an approved secure document process if requested later.");
+  let photoUrl = null;
+  if (typeof body.photoUrl === "string" && body.photoUrl.trim()) {
+    try {
+      photoUrl = validateUploadedDataUrl(body.photoUrl, {
+        allowPdf: false,
+        maxBytes: MAX_APPLICATION_DOCUMENT_BYTES,
+        fieldLabel: "Profile photo",
+      }).dataUrl;
+    } catch (error) {
+      fail(400, error instanceof Error ? error.message : "Profile photo must be a valid JPG, PNG, or WebP image (max 2 MB).");
+    }
+  }
+
+  const encryptedDocs = [];
+  for (const spec of REQUIRED_APPLICATION_DOCUMENTS) {
+    const raw = body[spec.key];
+    let rawDataUrl = raw;
+    let rawFileName = "";
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      rawDataUrl = raw.dataUrl;
+      rawFileName = typeof raw.fileName === "string" ? raw.fileName.trim() : "";
+    }
+    if (typeof rawDataUrl !== "string" || !rawDataUrl.trim()) {
+      fail(400, `${spec.label} is required.`);
+    }
+    let validated;
+    try {
+      validated = validateUploadedDataUrl(rawDataUrl, {
+        allowPdf: true,
+        maxBytes: MAX_APPLICATION_DOCUMENT_BYTES,
+        fieldLabel: spec.label,
+      });
+    } catch (error) {
+      fail(400, error instanceof Error ? error.message : `${spec.label} must be a valid JPG, PNG, WebP, or PDF file.`);
+    }
+    const ext = validated.mimeType === "application/pdf"
+      ? "pdf"
+      : validated.mimeType.split("/")[1];
+    const cleanName = rawFileName.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 120) || `${spec.defaultFileName}.${ext}`;
+    encryptedDocs.push({
+      docType: spec.key,
+      originalName: cleanName,
+      mimeType: validated.mimeType,
+      sizeBytes: validated.sizeBytes,
+      encryptedContent: encryptPayload({ dataUrl: validated.dataUrl }),
+    });
   }
 
   return withTransaction(() => {
@@ -965,6 +1019,25 @@ function createApplication(body, context) {
       null,
       photoUrl,
     );
+    const applicationId = Number(result.lastInsertRowid);
+    const insertDoc = db.prepare(`
+      INSERT INTO application_documents(
+        application_id, private_storage_key, original_name, mime_type, size_bytes, doc_type, encrypted_content
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const doc of encryptedDocs) {
+      const storageKey = `enc-app-${applicationId}-${doc.docType}-${randomBytes(8).toString("hex")}`;
+      insertDoc.run(
+        applicationId,
+        storageKey,
+        doc.originalName,
+        doc.mimeType,
+        doc.sizeBytes,
+        doc.docType,
+        doc.encryptedContent,
+      );
+    }
     db.prepare("DELETE FROM application_verifications WHERE session_hash = ?").run(sessionHash);
     const confirmation = applicationSubmittedEmail({
       name: fullName,
@@ -980,7 +1053,7 @@ function createApplication(body, context) {
     if (ceoEmail) {
       queueEmail(ceoEmail, "Registration application requires review", `A new application (${reference}) from ${fullName} is pending. Sign in at ${appUrl.origin} to review it.`);
     }
-    return { id: Number(result.lastInsertRowid), reference, fullName, email, position, confirmationEmailQueued };
+    return { id: applicationId, reference, fullName, email, position, confirmationEmailQueued };
   });
 }
 
@@ -1391,7 +1464,48 @@ async function route(req, res, context, body, url) {
     const rows = validStatuses.includes(statusParam)
       ? db.prepare(`SELECT ${selectCols} FROM employee_applications a LEFT JOIN employees e ON e.user_id = (SELECT u.id FROM users u WHERE u.email = a.email COLLATE NOCASE) WHERE LOWER(a.status) = ? ORDER BY a.id DESC`).all(statusParam)
       : db.prepare(`SELECT ${selectCols} FROM employee_applications a LEFT JOIN employees e ON e.user_id = (SELECT u.id FROM users u WHERE u.email = a.email COLLATE NOCASE) WHERE LOWER(a.status) = 'pending' ORDER BY a.id DESC`).all();
-    return { status: 200, body: rows };
+    const listDocs = db.prepare(`
+      SELECT id, doc_type AS docType, original_name AS originalName, mime_type AS mimeType,
+             size_bytes AS sizeBytes, created_at AS createdAt
+      FROM application_documents
+      WHERE application_id = ? AND doc_type IS NOT NULL
+      ORDER BY id ASC
+    `);
+    return {
+      status: 200,
+      body: rows.map((row) => ({ ...row, documents: listDocs.all(row.id) })),
+    };
+  }
+  const applicationDocumentMatch = path.match(/^\/api\/applications\/(\d+)\/documents\/([A-Za-z0-9_]+)$/);
+  if (method === "GET" && applicationDocumentMatch) {
+    const user = requireUser(context);
+    requireRole(user, "ceo");
+    const applicationId = Number(applicationDocumentMatch[1]);
+    const docType = applicationDocumentMatch[2];
+    if (!REQUIRED_APPLICATION_DOCUMENTS.some((item) => item.key === docType)) {
+      fail(404, "Document type not found.");
+    }
+    const doc = db.prepare(`
+      SELECT id, doc_type AS docType, original_name AS originalName, mime_type AS mimeType,
+             size_bytes AS sizeBytes, encrypted_content AS encryptedContent
+      FROM application_documents
+      WHERE application_id = ? AND doc_type = ?
+    `).get(applicationId, docType);
+    if (!doc || !doc.encryptedContent) fail(404, "Encrypted document not found.");
+    const decrypted = decryptPayload(doc.encryptedContent);
+    audit(user.user_id, "application.document_viewed", "application_document", doc.id);
+    return {
+      status: 200,
+      body: {
+        id: doc.id,
+        applicationId,
+        docType: doc.docType,
+        originalName: doc.originalName,
+        mimeType: doc.mimeType,
+        sizeBytes: doc.sizeBytes,
+        dataUrl: decrypted.dataUrl,
+      },
+    };
   }
   const applicationAction = path.match(/^\/api\/applications\/(\d+)\/(approve|reject)$/);
   if (method === "POST" && applicationAction) {
@@ -2406,7 +2520,7 @@ const server = createServer(async (req, res) => {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.setHeader("Cache-Control", "no-store");
   if (isProduction) {
-    res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; frame-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
   try {
@@ -2417,7 +2531,10 @@ const server = createServer(async (req, res) => {
         fail(415, "Requests must use application/json.");
       }
       const context = { ...getSession(req, res), req };
-      const body = req.method === "POST" ? await readBody(req) : {};
+      const requestMaxBytes = req.method === "POST" && url.pathname === "/api/applications"
+        ? maxApplicationBodyBytes
+        : maxBodyBytes;
+      const body = req.method === "POST" ? await readBody(req, requestMaxBytes) : {};
       const result = await route(req, res, context, body, url);
       res.writeHead(result.status, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(result.body));

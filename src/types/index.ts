@@ -14,6 +14,24 @@ export type User = {
   photoUrl?: string | null;
 };
 
+export type ApplicationDocumentType =
+  | "education10thDoc"
+  | "educationInterDoc"
+  | "educationHigherDoc"
+  | "panFront"
+  | "panBack"
+  | "aadharFront"
+  | "aadharBack";
+
+export type ApplicationDocumentMeta = {
+  id: number;
+  docType: ApplicationDocumentType;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
 export type Application = {
   id: number;
   reference: string;
@@ -34,6 +52,7 @@ export type Application = {
   employeeId?: string | null;
   activationUrl?: string;
   photoUrl?: string | null;
+  documents?: ApplicationDocumentMeta[];
 };
 
 export type CheckoutReason = "workday_complete" | "leaving_early" | "other" | "automatic_timeout";

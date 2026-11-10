@@ -18,6 +18,51 @@ let db;
 let browser;
 let context;
 let page;
+let smtpServer;
+let smtpMessages = [];
+
+async function startMockSmtp() {
+  smtpServer = createTcpServer((socket) => {
+    socket.setEncoding("utf8");
+    socket.write("220 mock.local ESMTP\r\n");
+    let buffered = "";
+    let collectingMessage = false;
+    let messageLines = [];
+    socket.on("data", (chunk) => {
+      buffered += chunk;
+      let boundary = buffered.indexOf("\r\n");
+      while (boundary !== -1) {
+        const line = buffered.slice(0, boundary);
+        buffered = buffered.slice(boundary + 2);
+        if (collectingMessage) {
+          if (line === ".") {
+            smtpMessages.push(messageLines.join("\r\n"));
+            messageLines = [];
+            collectingMessage = false;
+            socket.write("250 2.0.0 Message accepted\r\n");
+          } else {
+            messageLines.push(line.startsWith("..") ? line.slice(1) : line);
+          }
+        } else if (/^EHLO\b/i.test(line)) {
+          socket.write("250-mock.local\r\n250 PIPELINING\r\n");
+        } else if (/^HELO\b/i.test(line)) {
+          socket.write("250 mock.local\r\n");
+        } else if (line === "DATA") {
+          collectingMessage = true;
+          socket.write("354 End data with <CR><LF>.<CR><LF>\r\n");
+        } else if (/^QUIT\b/i.test(line)) {
+          socket.write("221 2.0.0 Bye\r\n");
+          socket.end();
+        } else {
+          socket.write("250 2.0.0 OK\r\n");
+        }
+        boundary = buffered.indexOf("\r\n");
+      }
+    });
+  });
+  await new Promise((resolve, reject) => smtpServer.listen(0, "127.0.0.1", (err) => (err ? reject(err) : resolve())));
+  return smtpServer.address().port;
+}
 
 async function freePort() {
   const listener = createTcpServer();
@@ -51,6 +96,7 @@ async function capture(name) {
 before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "meta-minds-browser-test-"));
   const port = await freePort();
+  const smtpPort = await startMockSmtp();
   baseUrl = `http://127.0.0.1:${port}`;
 
   child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "src/server.mjs"], {
@@ -63,6 +109,13 @@ before(async () => {
       NODE_ENV: "development",
       COMPANY_TIMEZONE: "Asia/Kolkata",
       TEST_CURRENT_DATE: "2026-11-04", // Wednesday, working day
+      SMTP_ALLOW_INSECURE_LOCALHOST: "true",
+      SMTP_HOST: "127.0.0.1",
+      SMTP_PORT: String(smtpPort),
+      SMTP_SECURE: "false",
+      SMTP_USER: "",
+      SMTP_PASSWORD: "",
+      SMTP_FROM: "MetaMinds HR <no-reply@example.test>",
     },
     stdio: ["ignore", "ignore", "inherit"],
   });
@@ -120,6 +173,7 @@ after(async () => {
   if (context) await context.close();
   if (browser) await browser.close();
   if (db) db.close();
+  if (smtpServer?.listening) await new Promise((resolve) => smtpServer.close(resolve));
   if (child && child.exitCode === null) {
     child.kill("SIGTERM");
     await new Promise((resolve) => child.once("exit", resolve));
@@ -557,13 +611,40 @@ test("Scenario 12 — Full-page profile editor and reason-only leave calendar wo
   await profileNav.click();
   await page.getByRole("heading",{name:"My Profile",exact:true}).waitFor({state:"visible"});
   assert.equal(await page.locator(".workspace-panel:has-text('My account')").count(),0);
+  assert.equal(await page.locator(".hub-tabbar").count(),0);
   await page.getByLabel("Phone number").fill("+91 98765 43210");
   await page.getByRole("button",{name:"Save Changes"}).click();
   await page.getByLabel("Phone number").waitFor({state:"visible"});
   assert.equal(await page.getByLabel("Phone number").inputValue(),"+91 98765 43210");
 
-  await page.locator(".hub-tabbar button:has-text('Leave & Calendar')").click();
+  const pngBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await page.locator("#profile-photo-upload").setInputFiles({
+    name: "avatar.png",
+    mimeType: "image/png",
+    buffer: pngBytes,
+  });
+  const headerPhoto = page.locator(".hub-heading-icon img.hub-heading-photo");
+  await headerPhoto.waitFor({ state: "visible" });
+  const headerSrc = await headerPhoto.getAttribute("src");
+  assert.match(headerSrc || "", /^data:image\/png;base64,/);
+  const topbarSrc = await page.locator(".profile-capsule-avatar").getAttribute("src");
+  assert.equal(topbarSrc, headerSrc);
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  assert.equal(await page.locator(".profile-capsule-avatar").getAttribute("src"), headerSrc);
+  await page.locator(".side-nav button:has-text('My Profile')").first().click();
+  await page.locator(".hub-heading-icon img.hub-heading-photo").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Remove" }).click();
+  await page.locator(".hub-heading-icon img.hub-heading-photo").waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".profile-capsule-avatar").getAttribute("src"), "/demo-avatar.svg");
+
+  await page.locator(".side-nav button:has-text('Leave & Calendar')").first().click();
   await page.getByRole("heading",{name:"Leave & Calendar",exact:true}).waitFor({state:"visible"});
+  assert.equal(await page.locator(".hub-tabbar").count(),0);
   assert.equal(await page.locator(".hub-calendar-weekday").count(),7);
   assert.ok(await page.locator(".hub-calendar-day").count()>=28);
   const reasons=await page.getByLabel("Reason for leave").locator("option").allTextContents();
@@ -593,4 +674,86 @@ test("Scenario 13 — Calendar highlights company-local today and restores it af
   const observances = serverSnapshot.observances;
   assert.ok(observances.some((entry) => entry.name === "Ratha Yatra"));
   assert.ok(serverSnapshot.holidays.some((entry) => entry.name === "Bhogi"));
+});
+
+test("Scenario 14 — 4-step registration collects 7 required encrypted documents and CEO can inspect & approve", async () => {
+  await page.locator(".sidebar-logout").click();
+  await page.getByRole("button", { name: /Apply to join the team/i }).click();
+  await page.getByRole("heading", { name: "Employee Application", exact: true }).waitFor({ state: "visible" });
+
+  await page.getByLabel(/Legal First Name/i).fill("Priya");
+  await page.getByLabel(/Legal Last Name/i).fill("Nair");
+  await page.getByLabel(/Contact Phone/i).fill("+91 98765 12345");
+  await page.getByRole("button", { name: /Continue to Next Step/i }).click();
+
+  await page.getByLabel(/Personal \/ Work Email/i).fill("priya.nair@example.test");
+  await page.getByRole("button", { name: "Send verification code" }).click();
+  await page.getByLabel("Email verification code").waitFor({ state: "visible" });
+  let otp = "";
+  for (let i = 0; i < 40; i += 1) {
+    const match = (smtpMessages.at(-1) || "").match(/font-size:34px[^>]*>([A-HJ-NP-Z2-9]{6})<\/div>/);
+    if (match) { otp = match[1]; break; }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok(otp, "Expected OTP email for browser registration test.");
+  await page.getByLabel("Email verification code").fill(otp);
+  await page.getByRole("button", { name: "Verify email" }).click();
+  await page.locator(".verification-badge:has-text('Verified')").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: /Continue to Next Step/i }).click();
+
+  await page.getByLabel(/Position \/ Designation/i).fill("Product Designer");
+  await page.getByLabel(/Department or Practice Area/i).fill("Product & Design");
+  await page.getByLabel(/Discussed Monthly Salary/i).fill("₹65,000 / month");
+  await page.getByLabel(/Create Portal Password/i).fill("StrongBrowserPass!99");
+  await page.getByLabel(/Confirm Portal Password/i).fill("StrongBrowserPass!99");
+  await page.getByRole("button", { name: /Continue to Next Step/i }).click();
+
+  await page.getByText(/Encrypted Onboarding Document Verification/i).waitFor({ state: "visible" });
+  assert.equal(await page.locator(".doc-box").count(), 7);
+
+  // Check privacy acknowledgement first without uploading docs -> must reject with missing doc error
+  await page.locator(".consent-row input[type='checkbox']").check();
+  await page.getByRole("button", { name: /Submit Application for CEO Approval/i }).click();
+  await page.locator(".form-error[role='alert']").waitFor({ state: "visible" });
+  assert.match(await page.locator(".form-error[role='alert']").innerText(), /10th \/ SSC Certificate/i);
+
+  const pngBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const pdfBytes = Buffer.from("%PDF-1.4\n%%EOF\n", "utf8");
+  await page.locator("#doc-education10thDoc").setInputFiles({ name: "10th.pdf", mimeType: "application/pdf", buffer: pdfBytes });
+  await page.locator("#doc-educationInterDoc").setInputFiles({ name: "inter.pdf", mimeType: "application/pdf", buffer: pdfBytes });
+  await page.locator("#doc-educationHigherDoc").setInputFiles({ name: "ug.pdf", mimeType: "application/pdf", buffer: pdfBytes });
+  await page.locator("#doc-panFront").setInputFiles({ name: "pan-front.png", mimeType: "image/png", buffer: pngBytes });
+  await page.locator("#doc-panBack").setInputFiles({ name: "pan-back.png", mimeType: "image/png", buffer: pngBytes });
+  await page.locator("#doc-aadharFront").setInputFiles({ name: "aadhaar-front.png", mimeType: "image/png", buffer: pngBytes });
+  await page.locator("#doc-aadharBack").setInputFiles({ name: "aadhaar-back.png", mimeType: "image/png", buffer: pngBytes });
+
+  await page.getByText("Encrypted Onboarding Document Verification (7 / 7 Attached)").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: /Submit Application for CEO Approval/i }).click();
+  await page.getByRole("button", { name: /Return to Sign In/i }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: /Return to Sign In/i }).click();
+
+  // Sign in as CEO and verify encrypted documents can be decrypted and viewed
+  await page.click("#login-identifier");
+  await page.fill("#login-identifier", "ceo@metaminds.local");
+  await page.click("#login-password");
+  await page.fill("#login-password", "Admin@SecurePassword123!");
+  await page.click("button[type='submit']");
+  await page.locator(".side-nav button:has-text('Applications')").first().click();
+  await page.locator("button[aria-label='Open application for Priya Nair']").click();
+  await page.getByText("7 / 7 Attached").waitFor({ state: "visible" });
+
+  // View decrypted PAN Front image
+  const panCard = page.locator(".kyc-doc-card", { hasText: "PAN Card (Front)" });
+  await panCard.getByRole("button", { name: "View" }).click();
+  await page.locator(".doc-inspector-img").waitFor({ state: "visible" });
+  assert.match((await page.locator(".doc-inspector-img").getAttribute("src")) || "", /^data:image\/png;base64,/);
+  await page.getByRole("button", { name: "Close Viewer" }).click();
+  await page.locator(".doc-inspector-card").waitFor({ state: "hidden" });
+
+  // Approve and verify employee ID generated
+  await page.getByRole("button", { name: /Approve & Provision Employee ID/i }).click();
+  await page.getByText("Assigned Employee ID").waitFor({ state: "visible" });
 });

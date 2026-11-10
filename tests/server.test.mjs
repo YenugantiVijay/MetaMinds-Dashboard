@@ -138,7 +138,24 @@ function latestPasswordResetToken(recipient) {
   return resetToken;
 }
 
-async function submitVerifiedApplication({ jar, csrf, name, email, employmentType, position, extraFields = {} }) {
+const SAMPLE_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const SAMPLE_PDF_DATA_URL =
+  `data:application/pdf;base64,${Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64")}`;
+
+function buildSyntheticDocuments() {
+  return {
+    education10thDoc: { dataUrl: SAMPLE_PDF_DATA_URL, fileName: "10th-cert.pdf" },
+    educationInterDoc: { dataUrl: SAMPLE_PDF_DATA_URL, fileName: "inter-cert.pdf" },
+    educationHigherDoc: { dataUrl: SAMPLE_PDF_DATA_URL, fileName: "ug-cert.pdf" },
+    panFront: { dataUrl: SAMPLE_PNG_DATA_URL, fileName: "pan-front.png" },
+    panBack: { dataUrl: SAMPLE_PNG_DATA_URL, fileName: "pan-back.png" },
+    aadharFront: { dataUrl: SAMPLE_PNG_DATA_URL, fileName: "aadhaar-front.png" },
+    aadharBack: { dataUrl: SAMPLE_PNG_DATA_URL, fileName: "aadhaar-back.png" },
+  };
+}
+
+async function submitVerifiedApplication({ jar, csrf, name, email, employmentType, position, extraFields = {}, omitFields = [] }) {
   const started = await request("/api/applications/verification/start", {
     jar,
     csrf,
@@ -170,20 +187,23 @@ async function submitVerifiedApplication({ jar, csrf, name, email, employmentTyp
     body: { code: emailCode },
   });
   assert.equal(emailVerified.status, 200, JSON.stringify(emailVerified.payload));
+  const payloadBody = {
+    employmentType,
+    position,
+    department: "Quality",
+    proposedJoiningDate: "2026-11-01",
+    education: "Synthetic test qualification",
+    privacyAcknowledged: true,
+    password: "Synthetic strong password 4321!",
+    ...buildSyntheticDocuments(),
+    ...extraFields,
+  };
+  for (const field of omitFields) delete payloadBody[field];
   return request("/api/applications", {
     jar,
     csrf,
     method: "POST",
-    body: {
-      employmentType,
-      position,
-      department: "Quality",
-      proposedJoiningDate: "2026-11-01",
-      education: "Synthetic test qualification",
-      privacyAcknowledged: true,
-      password: "Synthetic strong password 4321!",
-      ...extraFields,
-    },
+    body: payloadBody,
   });
 }
 
@@ -247,7 +267,7 @@ before(async () => {
     .run("test@example.test", "Synthetic migration test", "encrypted-payload");
   adminDb.prepare("INSERT INTO users(email, password_hash, role, active) VALUES (?, ?, 'ceo', 1)")
     .run("ceo@example.test", hashPassword("Test-only CEO password 9876!"));
-  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+  assert.deepEqual(adminDb.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("preserved@example.test").status, "pending");
   assert.equal(adminDb.prepare("SELECT status FROM email_outbox WHERE recipient = ?").get("test@example.test").status, "sending");
 });
@@ -400,17 +420,17 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   });
   assert.equal(unverifiedApplication.status, 401);
 
-  const documentUploadAttempt = await submitVerifiedApplication({
+  const missingDocumentAttempt = await submitVerifiedApplication({
     jar: employeeJar,
     csrf: employeeCsrf,
-    name: "Synthetic Applicant With Document",
-    email: "documents@example.test",
+    name: "Synthetic Applicant Missing Document",
+    email: "missing-doc@example.test",
     employmentType: "employee",
     position: "QA analyst",
-    extraFields: { panFront: "data:image/png;base64,c3ludGhldGlj" },
+    omitFields: ["aadharBack"],
   });
-  assert.equal(documentUploadAttempt.status, 400);
-  assert.match(documentUploadAttempt.payload.error, /not accepted through the public application/i);
+  assert.equal(missingDocumentAttempt.status, 400);
+  assert.match(missingDocumentAttempt.payload.error, /Aadhaar Card \(Back\) is required/i);
 
   const application = await submitVerifiedApplication({
     jar: employeeJar,
@@ -422,6 +442,18 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   });
   assert.equal(application.status, 201);
   assert.match(application.payload.reference, /^MM-APP-[A-F0-9]{32}$/);
+  const storedDocs = adminDb.prepare("SELECT doc_type, encrypted_content FROM application_documents WHERE application_id = ?").all(application.payload.id);
+  assert.equal(storedDocs.length, 7);
+  for (const storedDoc of storedDocs) {
+    assert.ok(storedDoc.encrypted_content);
+    assert.equal(storedDoc.encrypted_content.includes(SAMPLE_PNG_DATA_URL), false);
+    assert.equal(storedDoc.encrypted_content.includes(SAMPLE_PDF_DATA_URL), false);
+  }
+  const legacyDocCols = adminDb.prepare("SELECT education_10th_doc, pan_front, aadhar_front FROM employee_applications WHERE id = ?").get(application.payload.id);
+  assert.equal(legacyDocCols.education_10th_doc, null);
+  assert.equal(legacyDocCols.pan_front, null);
+  assert.equal(legacyDocCols.aadhar_front, null);
+  assert.equal((await request(`/api/applications/${application.payload.id}/documents/panFront`, { jar: employeeJar })).status, 401);
   const applicationRow = adminDb.prepare("SELECT status, mobile, password_hash, email_verified_at, phone_verified_at FROM employee_applications WHERE id = ?").get(application.payload.id);
   assert.equal(applicationRow.status, "pending");
   assert.equal(applicationRow.mobile, "");
@@ -477,6 +509,14 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(approvedApplications.payload.length, 1);
   assert.equal("panFront" in approvedApplications.payload[0], false);
   assert.equal("aadharFront" in approvedApplications.payload[0], false);
+  assert.equal(approvedApplications.payload[0].documents.length, 7);
+  assert.equal("dataUrl" in approvedApplications.payload[0].documents[0], false);
+
+  const ceoViewedDoc = await request(`/api/applications/${application.payload.id}/documents/panFront`, { jar: adminJar });
+  assert.equal(ceoViewedDoc.status, 200);
+  assert.equal(ceoViewedDoc.payload.dataUrl, SAMPLE_PNG_DATA_URL);
+  const docAudit = adminDb.prepare("SELECT action FROM audit_logs WHERE action = 'application.document_viewed'").get();
+  assert.ok(docAudit);
   const provisioned = adminDb.prepare("SELECT id, active FROM users WHERE email = ?").get("applicant@example.test");
   assert.equal(provisioned.active, 1);
   assert.equal(adminDb.prepare("SELECT COUNT(*) AS count FROM salary_structures WHERE employee_id = (SELECT id FROM employees WHERE user_id = ?)").get(provisioned.id).count, 0);
@@ -736,6 +776,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   const teamLeadDashboard = await request("/api/dashboard", { jar: teamLeadJar });
   assert.equal(teamLeadDashboard.payload.role, "team_lead");
   assert.equal((await request("/api/applications", { jar: teamLeadJar })).status, 403);
+  assert.equal((await request(`/api/applications/${application.payload.id}/documents/panFront`, { jar: teamLeadJar })).status, 403);
   assert.equal((await request("/api/settings", { jar: teamLeadJar })).status, 403);
   assert.equal(teamLeadDashboard.payload.teamMembers, 2);
   const teamLeadDirectory = await request("/api/employees", { jar: teamLeadJar });
@@ -863,6 +904,41 @@ test("self-service profile is owner-scoped and personal leave follows the one-da
   assert.equal(reloaded.payload.phone, "+91 98765 43210");
   assert.equal(reloaded.payload.emergencyName, "Synthetic Contact");
   assert.equal(reloaded.payload.email, "applicant@example.test");
+  assert.equal(reloaded.payload.photoUrl, null);
+
+  const samplePngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const badPhoto = await request("/api/me/profile/photo", {
+    jar, csrf, method: "POST",
+    body: { photoUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" },
+  });
+  assert.equal(badPhoto.status, 400);
+
+  const spoofedPng = await request("/api/me/profile/photo", {
+    jar, csrf, method: "POST",
+    body: { photoUrl: "data:image/png;base64,bm90LWEtcG5n" },
+  });
+  assert.equal(spoofedPng.status, 400);
+
+  const uploadedPhoto = await request("/api/me/profile/photo", {
+    jar, csrf, method: "POST",
+    body: { photoUrl: samplePngDataUrl },
+  });
+  assert.equal(uploadedPhoto.status, 200);
+  assert.equal(uploadedPhoto.payload.photoUrl, samplePngDataUrl);
+
+  const meWithPhoto = await request("/api/auth/me", { jar });
+  assert.equal(meWithPhoto.payload.user.photoUrl, samplePngDataUrl);
+  const profileWithPhoto = await request("/api/me/profile", { jar });
+  assert.equal(profileWithPhoto.payload.photoUrl, samplePngDataUrl);
+
+  const removedPhoto = await request("/api/me/profile/photo", {
+    jar, csrf, method: "POST",
+    body: { photoUrl: null },
+  });
+  assert.equal(removedPhoto.status, 200);
+  assert.equal(removedPhoto.payload.photoUrl, null);
+  const meWithoutPhoto = await request("/api/auth/me", { jar });
+  assert.equal(meWithoutPhoto.payload.user.photoUrl, null);
 
   const invalid = await request("/api/personal-leave", {
     jar, csrf, method: "POST",

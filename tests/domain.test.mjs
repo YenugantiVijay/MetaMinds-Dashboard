@@ -9,6 +9,7 @@ import {
   makeCompanyEmployeeId,
   isSecondSaturday,
   isCompanyHoliday,
+  validateUploadedDataUrl,
   verifyPassword,
   workedMinutes,
 } from "../src/domain.mjs";
@@ -140,4 +141,14 @@ test("password hashes are salted and can be verified without storing plaintext",
   assert.equal(verifyPassword("not the password", first), false);
   assert.equal(verifyPassword("password", "malformed"), false);
   assert.throws(() => hashPassword("short"), /12 and 256/);
+});
+
+test("uploaded document and photo validator checks MIME types, magic bytes, and size limits", () => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const pdf = `data:application/pdf;base64,${Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64")}`;
+  assert.equal(validateUploadedDataUrl(png, { allowPdf: false, fieldLabel: "Photo" }).mimeType, "image/png");
+  assert.equal(validateUploadedDataUrl(pdf, { allowPdf: true, fieldLabel: "Certificate" }).mimeType, "application/pdf");
+  assert.throws(() => validateUploadedDataUrl(pdf, { allowPdf: false, fieldLabel: "Photo" }), /valid PNG, JPG, or WebP/);
+  assert.throws(() => validateUploadedDataUrl("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", { allowPdf: true, fieldLabel: "PAN" }), /valid JPG, PNG, WebP, or PDF/);
+  assert.throws(() => validateUploadedDataUrl("data:image/png;base64,bm90LWEtcG5n", { allowPdf: true, fieldLabel: "PAN" }), /valid JPG, PNG, WebP, or PDF/);
 });
