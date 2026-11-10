@@ -9,9 +9,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_one_exemption_per_year
   ON leave_requests(employee_id, substr(start_date, 1, 4))
   WHERE exemption_day = 1 AND status = 'approved';
 
--- Internal category for the new reason-based policy; do not use it as a payroll policy.
-INSERT OR IGNORE INTO leave_types(name, paid, active)
-  VALUES ('Personal leave request', 0, 1);
+-- Personal leave category is created lazily on the first request, after legacy seeds.
 
 -- Employee-owned non-identity contact details; no PAN/Aadhaar or bank information.
 CREATE TABLE IF NOT EXISTS employee_self_profiles (
