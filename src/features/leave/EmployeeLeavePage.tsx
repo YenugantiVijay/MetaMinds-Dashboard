@@ -56,9 +56,11 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
   // necessarily the employee's current calendar year.
   useEffect(() => {
     const selectedYear = form.startDate?.slice(0, 4);
-    if (!selectedYear || selectedYear === String(new Date().getFullYear())) return;
     let active = true;
-    void api<Quota>(`/api/personal-leave/quota?year=${selectedYear}`)
+    const endpoint = selectedYear
+      ? `/api/personal-leave/quota?year=${selectedYear}`
+      : "/api/personal-leave/quota";
+    void api<Quota>(endpoint)
       .then((result) => { if (active) setQuota(result); })
       .catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : "Could not load yearly leave allowance.");
