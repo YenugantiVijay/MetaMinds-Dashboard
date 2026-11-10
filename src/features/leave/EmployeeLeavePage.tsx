@@ -52,6 +52,19 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
     } catch (err) { setError(err instanceof Error ? err.message : "Could not load leave calendar."); }
   }, []);
   useEffect(()=>{void load();},[load]);
+  // The annual exemption belongs to the year of the requested date, not
+  // necessarily the employee's current calendar year.
+  useEffect(() => {
+    const selectedYear = form.startDate?.slice(0, 4);
+    if (!selectedYear || selectedYear === String(new Date().getFullYear())) return;
+    let active = true;
+    void api<Quota>(`/api/personal-leave/quota?year=${selectedYear}`)
+      .then((result) => { if (active) setQuota(result); })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load yearly leave allowance.");
+      });
+    return () => { active = false; };
+  }, [form.startDate]);
 
   const holidayMap = useMemo(()=>new Map(holidays.map(item=>[item.holidayDate,item])),[holidays]);
   const leaveDays = useMemo(()=>{
