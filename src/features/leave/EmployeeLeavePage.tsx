@@ -92,7 +92,7 @@ export function EmployeeLeavePage({ user, notify, onNavigate }: {
     return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
   useEffect(() => {
-    if (!calendarInitialized && /^\\d{4}-\\d{2}-\\d{2}$/.test(today)) {
+    if (!calendarInitialized && /^\d{4}-\d{2}-\d{2}$/.test(today)) {
       const [year, monthNo] = today.split("-").map(Number);
       setMonth(new Date(year,monthNo-1,1));
       setCalendarInitialized(true);
