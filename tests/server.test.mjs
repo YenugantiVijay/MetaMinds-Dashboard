@@ -520,7 +520,7 @@ test("verified applications, CEO approval, employee/Team Lead accounts, attendan
   assert.equal(ceoLeaveApproval.payload.payTreatment, "unpaid");
   const approvedLeave = adminDb.prepare("SELECT status, pay_treatment FROM leave_requests WHERE id = ?").get(leave.payload.id);
   assert.equal(approvedLeave.status, "approved");
-  assert.equal(approvedLeave.pay_treatment, "unpaid");
+  assert.equal(approvedLeave.pay_treatment, null, "Personal leave approval must not decide payroll treatment.");
 
   const missingResetEmail = await request("/api/auth/password-reset/request", {
     jar: employeeJar,
