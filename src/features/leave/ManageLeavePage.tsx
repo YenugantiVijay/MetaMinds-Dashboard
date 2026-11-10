@@ -44,7 +44,7 @@ export function ManageLeavePage({ user, notify }: {user:User; notify:NotifyFn}) 
           <td>{row.reason}</td>
           <td><span className={`hub-request-status ${row.status}`}>{row.exemptionDay?"Exemption · ":""}{row.status}</span></td>
           <td>{row.status==="pending"?
-            (user.role==="ceo"||!row.requiresCeoApproval&&!row.policyMode)?
+            (user.role==="ceo"||(row.policyMode==="legacy"&&!row.requiresCeoApproval))?
               <div className="hub-management-actions">
                 <Button type="button" disabled={busy===row.id} onClick={()=>void decide(row.id,"approve")}><Check size={15}/> Approve</Button>
                 <Button type="button" variant="secondary" onClick={()=>setRejectId(row.id)}><X size={15}/> Reject</Button>
